@@ -14,6 +14,7 @@ async function sha256Hex(text) {
 function showApp() {
   document.getElementById("password-gate").hidden = true;
   document.getElementById("app").hidden = false;
+  window.scrollTo(0, 0);
   init();
 }
 
@@ -187,12 +188,10 @@ async function updateLivePrice() {
 
 function startLivePricePolling() {
   updateLivePrice();
-  setInterval(updateLivePrice, 10000);
+  setInterval(updateLivePrice, 3000);
 }
 
-async function init() {
-  setupRangeButtons();
-  startLivePricePolling();
+async function loadPredictions() {
   try {
     allPredictions = await fetchPredictions();
   } catch (err) {
@@ -212,6 +211,17 @@ async function init() {
   safeRender(renderCurrent, allPredictions[0]);
   safeRender(renderAccuracy, allPredictions);
   safeRender(renderHistory, allPredictions);
+}
+
+// Predictions only change every 15 min, so refreshing every 30s keeps the
+// panel feeling live without hammering Supabase for no reason.
+const PREDICTIONS_REFRESH_MS = 30000;
+
+async function init() {
+  setupRangeButtons();
+  startLivePricePolling();
+  await loadPredictions();
+  setInterval(loadPredictions, PREDICTIONS_REFRESH_MS);
 }
 
 if ("serviceWorker" in navigator) {
