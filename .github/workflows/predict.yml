@@ -1,8 +1,8 @@
-name: Hourly XRP Prediction
+name: Quarter-Hourly XRP Prediction
 
 on:
   schedule:
-    - cron: "5 * * * *"  # 5 minutes past every hour (UTC)
+    - cron: "1,16,31,46 * * * *"  # 1 minute after each 15-min mark (UTC)
   workflow_dispatch: {}   # allows manual "Run workflow" trigger for testing
 
 permissions:
@@ -23,9 +23,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
-      - name: Run hourly prediction
+      - name: Run prediction
         working-directory: backend
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python predict_hourly.py
+        run: python predict.py

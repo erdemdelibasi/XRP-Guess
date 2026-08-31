@@ -6,38 +6,64 @@ from ta.trend import EMAIndicator, MACD, SMAIndicator
 from ta.volatility import BollingerBands
 
 
+# Candles are 15-minute bars (4 per hour). Indicator windows below are scaled
+# x4 from their "classic" hourly-chart values so each one still spans the same
+# real-world duration (e.g. RSI still looks back ~14 hours, just measured in
+# 56 fifteen-minute candles instead of 14 hourly ones).
+PERIODS_PER_HOUR = 4
+
+
 def add_indicator_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Given an OHLCV DataFrame (oldest -> newest), append indicator columns."""
     out = df.copy()
     close = out["close"]
+    p = PERIODS_PER_HOUR
 
-    out["rsi14"] = RSIIndicator(close, window=14).rsi()
+    out["rsi14"] = RSIIndicator(close, window=14 * p).rsi()
 
-    macd = MACD(close)
+    macd = MACD(close, window_slow=26 * p, window_fast=12 * p, window_sign=9 * p)
     out["macd"] = macd.macd()
     out["macd_signal"] = macd.macd_signal()
     out["macd_hist"] = macd.macd_diff()
 
-    out["ema9"] = EMAIndicator(close, window=9).ema_indicator()
-    out["ema21"] = EMAIndicator(close, window=21).ema_indicator()
-    out["sma50"] = SMAIndicator(close, window=50).sma_indicator()
+    out["ema9"] = EMAIndicator(close, window=9 * p).ema_indicator()
+    out["ema21"] = EMAIndicator(close, window=21 * p).ema_indicator()
+    out["sma50"] = SMAIndicator(close, window=50 * p).sma_indicator()
 
-    bb = BollingerBands(close, window=20, window_dev=2)
+    bb = BollingerBands(close, window=20 * p, window_dev=2)
     out["bb_high"] = bb.bollinger_hband()
     out["bb_low"] = bb.bollinger_lband()
     out["bb_pct"] = bb.bollinger_pband()  # 0 = at lower band, 1 = at upper band
 
-    out["volume_ma20"] = out["volume"].rolling(20).mean()
+    out["volume_ma20"] = out["volume"].rolling(20 * p).mean()
     out["volume_ratio"] = out["volume"] / out["volume_ma20"]
 
-    out["return_1h"] = close.pct_change(1)
-    out["return_6h"] = close.pct_change(6)
-    out["return_24h"] = close.pct_change(24)
+    # Column names denote the real-world duration they cover, not the raw
+    # candle count -- return_1h is still "return over the last hour".
+    out["return_1h"] = close.pct_change(1 * p)
+    out["return_6h"] = close.pct_change(6 * p)
+    out["return_24h"] = close.pct_change(24 * p)
 
     return out
 
 
-def add_cross_asset_correlation(xrp: pd.DataFrame, other: pd.DataFrame, label: str, window: int = 24) -> pd.DataFrame:
+def recent_volatility(df: pd.DataFrame, window: int = 8) -> float:
+    """Rolling std-dev of single-candle (15-min) returns, as a fraction (e.g.
+    0.004 = 0.4%). Used to translate a directional score into a plausible
+    magnitude for the next 15-min move. window=8 candles = ~2 hours."""
+    vol = df["close"].pct_change().rolling(window).std().iloc[-1]
+    return float(vol) if pd.notna(vol) else 0.0
+
+
+def estimate_pct_change(score: float, volatility: float) -> float:
+    """Converts a -1..1 directional score into an expected percentage price
+    change, scaled by how volatile the asset has actually been recently (so
+    a max-confidence signal implies roughly a one-std-dev move, not a fixed
+    arbitrary percentage)."""
+    return float(score) * volatility
+
+
+def add_cross_asset_correlation(xrp: pd.DataFrame, other: pd.DataFrame, label: str, window: int = 96) -> pd.DataFrame:
     """Append rolling return-correlation between XRP and another asset (e.g. BTC, ETH),
     plus that asset's own latest 1h return (used as a market-confirmation signal)."""
     out = xrp.copy()

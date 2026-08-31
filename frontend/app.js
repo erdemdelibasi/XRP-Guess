@@ -58,19 +58,34 @@ function fmtTime(iso) {
   });
 }
 
+function fmtPct(pct) {
+  if (pct == null) return "-";
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${(pct * 100).toFixed(2)}%`;
+}
+
+function fmtPrice(price) {
+  if (price == null) return "-";
+  return `$${Number(price).toFixed(4)}`;
+}
+
 function renderCurrent(latest) {
   document.getElementById("last-updated").textContent = fmtTime(latest.created_at);
-  document.getElementById("current-price").textContent = `$${Number(latest.price_at_prediction).toFixed(4)}`;
+  document.getElementById("current-price").textContent = fmtPrice(latest.price_at_prediction);
 
   const dirEl = document.getElementById("current-direction");
   dirEl.textContent = latest.predicted_direction === "UP" ? "▲ Artış" : "▼ Azalış";
   dirEl.className = `direction ${latest.predicted_direction === "UP" ? "up" : "down"}`;
 
+  document.getElementById("current-target").textContent = latest.target_time ? fmtTime(latest.target_time) : "-";
+  document.getElementById("current-predicted-price").textContent =
+    `${fmtPrice(latest.predicted_price)} (${fmtPct(latest.predicted_pct_change)})`;
+
   document.getElementById("current-confidence").textContent = `%${Math.round(latest.confidence * 100)}`;
   document.getElementById("tech-component").textContent =
-    `${latest.tech_direction ?? "-"} (%${Math.round((latest.tech_confidence ?? 0) * 100)})`;
+    `${latest.tech_direction ?? "-"} ${fmtPct(latest.tech_pct_change)} → ${fmtPrice(latest.tech_price)}`;
   document.getElementById("ml-component").textContent =
-    `${latest.ml_direction ?? "-"} (%${Math.round((latest.ml_confidence ?? 0) * 100)})`;
+    `${latest.ml_direction ?? "-"} ${fmtPct(latest.ml_pct_change)} → ${fmtPrice(latest.ml_price)}`;
 }
 
 function filterByRange(predictions, days) {
@@ -127,8 +142,9 @@ function renderHistory(predictions) {
     const resultText = p.resolved_at == null ? "Bekliyor" : p.correct ? "Doğru" : "Yanlış";
 
     tr.innerHTML = `
-      <td>${fmtTime(p.created_at)}</td>
-      <td class="${p.predicted_direction === "UP" ? "up" : "down"}">${p.predicted_direction}</td>
+      <td>${p.target_time ? fmtTime(p.target_time) : "-"}</td>
+      <td class="${p.predicted_direction === "UP" ? "up" : "down"}">${p.predicted_direction} ${fmtPct(p.predicted_pct_change)}</td>
+      <td>${fmtPrice(p.predicted_price)}</td>
       <td>${p.actual_direction ?? "-"}</td>
       <td class="${resultClass}">${resultText}</td>
     `;

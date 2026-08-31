@@ -2,30 +2,38 @@
 -- to create the tables this app needs.
 
 create table if not exists predictions (
-  id                  bigint generated always as identity primary key,
-  created_at          timestamptz not null default now(),
-  symbol              text not null default 'XRPUSDT',
-  price_at_prediction numeric not null,
-  predicted_direction text not null check (predicted_direction in ('UP', 'DOWN')),
-  confidence          numeric not null,
+  id                    bigint generated always as identity primary key,
+  created_at            timestamptz not null default now(),
+  target_time           timestamptz,
+  symbol                text not null default 'XRPUSDT',
+  price_at_prediction   numeric not null,
+  predicted_direction   text not null check (predicted_direction in ('UP', 'DOWN')),
+  confidence            numeric not null,
+  predicted_pct_change  numeric,
+  predicted_price       numeric,
 
-  tech_direction      text,
-  tech_confidence     numeric,
-  ml_direction        text,
-  ml_confidence       numeric,
-  weight_technical    numeric,
-  weight_ml           numeric,
-  model_version       text,
+  tech_direction        text,
+  tech_confidence       numeric,
+  tech_pct_change       numeric,
+  tech_price            numeric,
+  ml_direction          text,
+  ml_confidence         numeric,
+  ml_pct_change         numeric,
+  ml_price              numeric,
+  weight_technical      numeric,
+  weight_ml             numeric,
+  model_version         text,
 
-  resolved_at         timestamptz,
-  price_at_resolution numeric,
-  actual_direction    text check (actual_direction in ('UP', 'DOWN')),
-  correct             boolean,
-  tech_correct        boolean,
-  ml_correct          boolean
+  resolved_at           timestamptz,
+  price_at_resolution   numeric,
+  actual_direction      text check (actual_direction in ('UP', 'DOWN')),
+  correct               boolean,
+  tech_correct          boolean,
+  ml_correct            boolean
 );
 
 create index if not exists predictions_created_at_idx on predictions (created_at desc);
+create index if not exists predictions_target_time_idx on predictions (target_time);
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
 
 create table if not exists model_state (

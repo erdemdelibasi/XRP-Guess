@@ -1,7 +1,8 @@
 # XRP Tahmin Paneli
 
 Kişisel kullanım için: Binance'ın herkese açık piyasa verisini kullanarak XRP
-için saatlik yön tahmini (artış/azalış) üreten, tahminleri loglayan ve başarı
+için her 15 dakikada bir bir sonraki çeyrek-saat işareti için yön (artış/azalış),
+yüzde değişim ve hedef fiyat tahmini üreten, tahminleri loglayan ve başarı
 oranını gösteren bir panel. iPhone'da "Ana Ekrana Ekle" ile app gibi çalışır.
 
 **Bu bir yatırım tavsiyesi aracı değildir.** Binance hesabına hiç bağlanmaz,
@@ -18,17 +19,17 @@ API anahtarı istemez, otomatik alım-satım yapmaz — sadece izleme/tahmin ama
    - `anon` `public` key
    - `service_role` key (bunu **kimseyle paylaşma**, sadece GitHub Secrets'a girecek)
 
-### 2. GitHub (kod deposu + saatlik zamanlayıcı)
+### 2. GitHub (kod deposu + 15 dakikalık zamanlayıcı)
 1. Bu klasörü kendi GitHub hesabında yeni bir **private** repo olarak paylaş
    (`git remote add origin ...` ve `git push`).
 2. Repo → **Settings → Secrets and variables → Actions → New repository secret**
    ile şu ikisini ekle:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_KEY` (service_role key)
-3. **Actions** sekmesinden `Hourly XRP Prediction` workflow'unu aç, sağ üstten
-   **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız çalıştığını
-   doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak "bootstrap"
-   eğitimi yapılır (birkaç saniye sürer).
+3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
+   üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
+   çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak
+   "bootstrap" eğitimi yapılır (geçmiş 15 dakikalık mumlarla, biraz sürebilir).
 4. `Daily Model Retrain` workflow'unu da bir kez manuel çalıştır — bu, eğitilen
    modeli `backend/models/xrp_model.joblib` olarak repoya geri commit eder.
 
@@ -63,19 +64,30 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 3. Artık ana ekrandan tam ekran bir uygulama gibi açılır.
 
 ## Nasıl çalışıyor
-- Her saat başı (`.github/workflows/hourly_predict.yml`) GitHub Actions,
-  Binance'tan XRP/BTC/ETH verisini çeker, teknik indikatör sinyali + ML model
-  sinyalini birleştirip bir tahmin loglar ve bir önceki saatin tahminini
-  gerçekleşen fiyatla karşılaştırıp doğru/yanlış olarak işaretler.
-- Her gün (`daily_retrain.yml`) ML modeli güncel verilerle yeniden eğitilir ve
-  teknik/ML bileşenlerinin son 14 günlük başarı oranına göre birleştirme
-  ağırlıkları güncellenir — sistemin kendini zamanla ayarlaması bu şekilde olur.
-- Panelde: güncel tahmin, doğru/yanlış pasta grafiği (24s/7g/30g/tümü
-  filtreli) ve geçmiş tahmin tablosu gösterilir.
+- Her 15 dakikada bir (`.github/workflows/predict.yml`, `:01/:16/:31/:46`)
+  GitHub Actions, Binance'tan XRP/BTC/ETH'nin 15 dakikalık mum verisini çeker,
+  teknik indikatör sinyali + ML model sinyalini birleştirir ve **bir sonraki
+  çeyrek-saat işareti** (örn. 18:07'de çalışırsa 18:15'i) için yön, yüzde
+  değişim ve hedef fiyat tahmini loglar. Bir saat içinde böylece 4 ayrı
+  tahmin birikir (18:15, 18:30, 18:45, 19:00 gibi). Aynı çalışma, hedef zamanı
+  gelmiş önceki tahminleri gerçekleşen fiyatla karşılaştırıp doğru/yanlış
+  olarak işaretler.
+- Her gün (`daily_retrain.yml`) ML modeli ~41 günlük 15-dakikalık geçmişle
+  yeniden eğitilir ve teknik/ML bileşenlerinin son 14 günlük başarı oranına
+  göre birleştirme ağırlıkları güncellenir — sistemin kendini zamanla
+  ayarlaması bu şekilde olur.
+- Panelde: güncel tahmin (hedef zaman, yüzde değişim, tahmini fiyat, teknik/ML
+  kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli) ve geçmiş
+  tahmin tablosu gösterilir.
 
 ## Sınırlamalar
 - Kripto fiyat tahmini doğası gereği belirsizdir; "kanıtlanmış" garanti bir
   yöntem yoktur. Bu araç olasılıksal sinyaller üretir ve başarısını şeffafça
   loglar — yatırım kararı tamamen sana aittir.
+- Gösterilen yüzde değişim/hedef fiyat, ayrı bir fiyat regresyon modelinin
+  çıktısı değildir; yön sinyalinin gücü, XRP'nin güncel volatilitesiyle
+  ölçeklenerek türetilen bir **tahmini** büyüklüktür (yani "bu kadar emin
+  isem, tipik olarak bu kadarlık bir hareket beklenir" mantığı). Kesin bir
+  fiyat vaadi değildir.
 - Parola koruması client-side'dır, gelişmiş bir saldırgana karşı güvenlik
   sağlamaz; sadece rastgele erişimi engeller.

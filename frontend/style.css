@@ -99,6 +99,8 @@ html, body {
 .direction.up { background: rgba(46, 204, 113, 0.15); color: var(--up); }
 .direction.down { background: rgba(231, 76, 60, 0.15); color: var(--down); }
 
+.target-row { margin-top: 10px; font-size: 0.85rem; }
+.predicted-row { margin-top: 6px; font-weight: 600; }
 .confidence-row { margin-top: 10px; }
 .components-row { margin-top: 6px; display: flex; gap: 16px; font-size: 0.85rem; }
 
