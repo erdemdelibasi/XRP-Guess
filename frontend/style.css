@@ -75,6 +75,8 @@ html, body {
   margin-bottom: 16px;
 }
 .topbar h1 { font-size: 1.4rem; margin: 0; }
+.topbar-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.clock { font-weight: 700; font-variant-numeric: tabular-nums; }
 
 .live-price-row {
   display: flex;

@@ -173,6 +173,19 @@ function safeRender(fn, ...args) {
   }
 }
 
+function updateClock() {
+  document.getElementById("live-clock").textContent = new Date().toLocaleTimeString("tr-TR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function startClock() {
+  updateClock();
+  setInterval(updateClock, 1000);
+}
+
 const BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/price?symbol=XRPUSDT";
 
 async function updateLivePrice() {
@@ -219,6 +232,7 @@ const PREDICTIONS_REFRESH_MS = 30000;
 
 async function init() {
   setupRangeButtons();
+  startClock();
   startLivePricePolling();
   await loadPredictions();
   setInterval(loadPredictions, PREDICTIONS_REFRESH_MS);
