@@ -1,4 +1,4 @@
-const CACHE_NAME = "xrp-tahmin-v1";
+const CACHE_NAME = "xrp-tahmin-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -26,11 +26,19 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  // Only cache same-origin shell assets; let API calls (Supabase, etc.) go straight to network.
+  // Only handle same-origin shell assets; let API calls (Supabase, etc.) go straight to network.
   if (url.origin !== self.location.origin || event.request.method !== "GET") {
     return;
   }
+  // Network-first: always prefer the latest deployed file. Only fall back to
+  // the cache when there's no connection (e.g. offline on the subway).
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
