@@ -172,8 +172,27 @@ function safeRender(fn, ...args) {
   }
 }
 
+const BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/price?symbol=XRPUSDT";
+
+async function updateLivePrice() {
+  try {
+    const res = await fetch(BINANCE_TICKER_URL);
+    if (!res.ok) throw new Error(`Binance fetch failed: ${res.status}`);
+    const data = await res.json();
+    document.getElementById("live-price").textContent = fmtPrice(Number(data.price));
+  } catch (err) {
+    console.error("Live price fetch failed:", err);
+  }
+}
+
+function startLivePricePolling() {
+  updateLivePrice();
+  setInterval(updateLivePrice, 10000);
+}
+
 async function init() {
   setupRangeButtons();
+  startLivePricePolling();
   try {
     allPredictions = await fetchPredictions();
   } catch (err) {
@@ -181,6 +200,10 @@ async function init() {
     console.error(err);
     return;
   }
+
+  // Rows logged before the target_time/pct-change columns existed are legacy
+  // test data -- drop them so the history table only shows real forecasts.
+  allPredictions = allPredictions.filter((p) => p.target_time != null);
 
   if (allPredictions.length === 0) {
     document.getElementById("last-updated").textContent = "Henüz veri yok";

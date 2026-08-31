@@ -76,6 +76,19 @@ html, body {
 }
 .topbar h1 { font-size: 1.4rem; margin: 0; }
 
+.live-price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+#live-price { font-weight: 700; color: var(--accent); }
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
