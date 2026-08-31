@@ -141,12 +141,18 @@ function renderHistory(predictions) {
 
     const resultClass = p.resolved_at == null ? "pending" : p.correct ? "up" : "down";
     const resultText = p.resolved_at == null ? "Bekliyor" : p.correct ? "Doğru" : "Yanlış";
+    const predDirClass = p.predicted_direction === "UP" ? "up" : "down";
 
     tr.innerHTML = `
       <td>${p.target_time ? fmtTime(p.target_time) : "-"}</td>
-      <td class="${p.predicted_direction === "UP" ? "up" : "down"}">${p.predicted_direction} ${fmtPct(p.predicted_pct_change)}</td>
-      <td>${fmtPrice(p.predicted_price)}</td>
-      <td>${p.actual_direction ?? "-"}</td>
+      <td class="${predDirClass}">
+        <div>${p.predicted_direction} ${fmtPct(p.predicted_pct_change)}</div>
+        <div class="sub">${fmtPrice(p.predicted_price)}</div>
+      </td>
+      <td>
+        <div>${p.actual_direction ?? "-"}</div>
+        <div class="sub">${fmtPrice(p.price_at_resolution)}</div>
+      </td>
       <td class="${resultClass}">${resultText}</td>
     `;
     tbody.appendChild(tr);
