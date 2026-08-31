@@ -148,21 +148,31 @@ function setupRangeButtons() {
   });
 }
 
+function safeRender(fn, ...args) {
+  try {
+    fn(...args);
+  } catch (err) {
+    console.error(`${fn.name} failed:`, err);
+  }
+}
+
 async function init() {
   setupRangeButtons();
   try {
     allPredictions = await fetchPredictions();
-    if (allPredictions.length === 0) {
-      document.getElementById("last-updated").textContent = "Henüz veri yok";
-      return;
-    }
-    renderCurrent(allPredictions[0]);
-    renderAccuracy(allPredictions);
-    renderHistory(allPredictions);
   } catch (err) {
     document.getElementById("last-updated").textContent = "Veri alınamadı";
     console.error(err);
+    return;
   }
+
+  if (allPredictions.length === 0) {
+    document.getElementById("last-updated").textContent = "Henüz veri yok";
+    return;
+  }
+  safeRender(renderCurrent, allPredictions[0]);
+  safeRender(renderAccuracy, allPredictions);
+  safeRender(renderHistory, allPredictions);
 }
 
 if ("serviceWorker" in navigator) {
