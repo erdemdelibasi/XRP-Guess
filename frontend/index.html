@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>XRP Tahmin Paneli</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="XRP Tahmin" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <section id="password-gate" class="gate">
+    <div class="gate-card">
+      <h1>XRP Tahmin Paneli</h1>
+      <p class="muted">Bu uygulama sadece kişisel kullanım içindir.</p>
+      <form id="gate-form">
+        <input type="password" id="gate-password" placeholder="Parola" autocomplete="current-password" required />
+        <button type="submit">Giriş</button>
+      </form>
+      <p id="gate-error" class="error" hidden>Parola yanlış.</p>
+    </div>
+  </section>
+
+  <main id="app" hidden>
+    <header class="topbar">
+      <h1>XRP / USDT</h1>
+      <span id="last-updated" class="muted">-</span>
+    </header>
+
+    <section class="card current-prediction">
+      <div class="price-row">
+        <span id="current-price" class="price">-</span>
+        <span id="current-direction" class="direction">-</span>
+      </div>
+      <div class="confidence-row">
+        <span class="muted">Güven:</span>
+        <span id="current-confidence">-</span>
+      </div>
+      <div class="components-row muted">
+        <span>Teknik: <span id="tech-component">-</span></span>
+        <span>ML: <span id="ml-component">-</span></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <h2>Başarı Oranı</h2>
+        <div class="range-buttons" id="range-buttons">
+          <button data-range="1">24s</button>
+          <button data-range="7" class="active">7g</button>
+          <button data-range="30">30g</button>
+          <button data-range="0">Tümü</button>
+        </div>
+      </div>
+      <canvas id="accuracy-pie" width="280" height="280"></canvas>
+      <p id="accuracy-summary" class="muted center">-</p>
+      <p id="weights-summary" class="muted center small">-</p>
+    </section>
+
+    <section class="card">
+      <h2>Geçmiş Tahminler</h2>
+      <div class="table-wrap">
+        <table id="history-table">
+          <thead>
+            <tr>
+              <th>Zaman</th>
+              <th>Tahmin</th>
+              <th>Gerçekleşen</th>
+              <th>Sonuç</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="disclaimer">
+      Bu araç bir yatırım tavsiyesi değildir. Kripto para fiyat hareketleri
+      doğası gereği belirsizdir; hiçbir model gelecekteki fiyatları garanti
+      edemez. Burada gösterilen tahminler deneysel amaçlıdır.
+    </footer>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
