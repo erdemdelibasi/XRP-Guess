@@ -1,4 +1,4 @@
-const CACHE_NAME = "xrp-tahmin-v2";
+const CACHE_NAME = "xrp-tahmin-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",
