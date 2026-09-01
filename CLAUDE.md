@@ -34,7 +34,22 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   (public, key'siz, CORS açık) kullanılır — `api.binance.com` değil, çünkü
   cloud CI runner'ları IP bazlı engellenebiliyor.
 - **Gerçek para/emir yok.** `backend/trading.py` tamamen simülasyon;
-  `portfolio_state`/`trades` tabloları sanal.
+  `portfolio_state`/`trades` tabloları sanal. Pozisyon büyüklüğü
+  güven-bazlı (`_target_allocation`, ikili CASH/LONG değil), stop-loss'u
+  var (`STOP_LOSS_DRAWDOWN`, `peak_value` hiç geri düşmez). Karar mantığı
+  `compute_rebalance()` içinde DB'siz saf bir fonksiyon olarak yaşıyor —
+  hem `maybe_trade()` (canlı) hem `backend/backtest.py` (geçmiş replay)
+  aynı fonksiyonu çağırır, mantık iki yerde tekrarlanmaz. Yeni bir eşik/
+  parametre değiştirirsen `backtest.py`'ı çalıştırıp etkisini gerçekten
+  ölç — `REBALANCE_THRESHOLD` ilk denemede %10 iken backtest'te aşırı
+  komisyon erozyonuna yol açtığı görülüp %25'e çıkarıldı, sezgiyle değil
+  ölçümle karar verildi.
+- `backend/backtest.py` (`workflow_dispatch`, cron yok) sadece
+  technical+ML'i test eder — whale/news/orderbook canlı-only. İlk ~83
+  günlük çalıştırma dürüst ama çarpıcı bir sonuç verdi: %49 yön isabeti
+  (rastgeleden kötü) ve al-ve-tut'un çok altında getiri. Bunu "sistem
+  bozuk" diye yorumlama ya da gizleme — bu backtest'in görevini yaptığının
+  kanıtı; README'nin Sınırlamalar bölümünde kullanıcıya da aynen aktarıldı.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
 - Yön sinyali beş bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı

@@ -1,0 +1,26 @@
+name: Backtest (manual)
+
+on:
+  workflow_dispatch: {}   # no schedule -- this is a one-off research tool, not a live signal
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run backtest
+        working-directory: backend
+        run: python backtest.py

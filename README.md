@@ -141,13 +141,31 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   bu şekilde olur. Balina/haber gibi çoğu zaman sessiz kalan bileşenler için
   yeterli "konuştuğu" örnek birikene kadar (asgari 20 sessiz-olmayan
   tahmin) ağırlıklar varsayılan değerlerde kalır.
-- Aynı çalışma, nihai (ensemble) tahmin yön değiştirdiğinde ve güven eşiğini
-  geçtiğinde `trading.py` üzerinden **sanal** bir alım/satım da tetikler:
-  Artış'a dönünce elde nakit varsa tüm nakitle XRP alınır, Azalış'a dönünce
-  elde XRP varsa tamamı satılır (Binance'ın standart %0.10'luk spot işlem
-  komisyonu her işlemde düşülür). Aynı yönde kaldığı sürece işlem yapılmaz —
-  yoksa komisyonlar her 15 dakikada bir portföyü eritirdi. Gerçek para veya
+- Aynı çalışma, nihai (ensemble) tahminle `trading.py` üzerinden **sanal**
+  bir yeniden dengeleme de tetikler. Eskiden ya tamamen nakit ya tamamen XRP
+  olacak şekilde ikili çalışıyordu; artık **güven-bazlı pozisyon
+  büyüklüğü** kullanıyor: hedef XRP oranı `min(güven/0.25, 1) × %85` ile
+  hesaplanır (yani güven ne kadar yüksekse portföyün o kadar büyük bir
+  kısmı XRP'ye ayrılır, tek sinyalle asla %85'i geçmez). Mevcut oran
+  hedeften portföy değerinin %25'inden fazla sapmadıkça işlem yapılmaz
+  (komisyon erozyonunu önlemek için — ilk denemede %10 eşik kullanılmıştı
+  ama `backtest.py` bunun aşırı sık işleme yol açtığını gösterdi). Ayrıca
+  bir **stop-loss** var: portföy değeri kendi tüm-zamanların zirvesinden
+  %15 düşerse yöne bakılmaksızın tamamı nakde çevrilir (zirve asla geriye
+  düşmez — fiyat toparlanmadan yeniden pozisyon açılırsa aynı stop-loss'a
+  kısa sürede tekrar takılabilir, bu beklenen bir davranıştır). Her işlemde
+  Binance'ın standart %0.10'luk spot komisyonu düşülür. Gerçek para veya
   Binance hesabı kesinlikle karışmaz.
+- `backend/backtest.py` (`workflow_dispatch` ile elle çalıştırılır, zamanlanmış
+  değildir) sadece teknik+ML bileşenlerini (balina/haber/emir-defteri
+  canlı-only, geçmiş arşivi yok) ~83 günlük geçmiş veriyle, look-ahead
+  olmadan (her adımda sadece son 400 mumluk pencere) geriye test eder ve
+  aynı pozisyon büyüklüğü/stop-loss mantığını uygular. Al-ve-tut ve sabit
+  nakit taban çizgileriyle karşılaştırır — canlı sistemdeki "isabet oranı"
+  rakamının ne kadar güvenilir olduğunu bağımsızca kontrol etmenin yolu
+  budur (canlının günlük yeniden-eğitimi/kendi kendini ayarlayan ağırlıkları
+  tekrar oynatılmaz, bu yüzden birebir aynı sonucu vermez — bkz. betiğin
+  başındaki sınırlamalar).
 - Panelde: güncel tahmin (hedef zaman, yüzde değişim, tahmini fiyat, teknik/ML
   kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli), sanal
   portföyün canlı değeri ve işlem geçmişi, ve geçmiş tahmin tablosu gösterilir.
@@ -182,3 +200,11 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 - "Borsaya giriş=düşüş, çıkış=yükseliş" ve haber-başlık sentiment'i,
   akademik literatürde sıkça kullanılan ama kesinliği kanıtlanmamış sezgisel
   (heuristic) yorumlardır — teknik/ML sinyalleri gibi bunlar da olasılıksaldır.
+- `backtest.py`'ın ilk ~83 günlük çalıştırması dürüst bir sonuç verdi: o
+  belirli pencerede teknik+ML yön isabeti %49 (rastgele tahminden bile
+  kötü) çıktı ve strateji al-ve-tut'un (XRP o pencerede güçlü yükseldiği
+  için) çok gerisinde kaldı. Bu, "sistem çalışıyor" iddiasını değil,
+  backtest'in gerçekten işe yaradığını gösteriyor — canlıdaki isabet oranı
+  rakamına körü körüne güvenmemek gerektiğinin somut kanıtı. Farklı zaman
+  pencerelerinde farklı sonuçlar çıkabilir; düzenli olarak yeniden
+  çalıştırıp takip etmek gerekir.
