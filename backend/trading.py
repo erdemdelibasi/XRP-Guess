@@ -12,9 +12,21 @@ Stop-loss: if the portfolio's value falls more than STOP_LOSS_DRAWDOWN below
 its running all-time peak, it's force-liquidated to cash regardless of the
 current signal. peak_value never resets down after a stop-loss -- a real
 high-water mark has to stay a real high-water mark, or the drawdown control
-is meaningless. One consequence: if price hasn't recovered, re-entering a
-position can trip the same stop-loss again quickly -- that's expected
-high-water-mark behavior, not a bug.
+is meaningless.
+
+Because peak_value stays stale, a small confidence-scaled re-entry right
+after a stop-loss almost never lifts the portfolio back above the
+still-elevated threshold in one step -- so without a cooldown, the very next
+candle re-triggers the same stop-loss, and this repeats. A backtest
+diagnostic confirmed this isn't hypothetical: 235 of 236 stop-losses in a
+60-day window were followed by a re-entry that got stopped out again within
+10 hours, burning ~35% of starting capital in fees alone with no
+directional benefit. STOP_LOSS_COOLDOWN_CANDLES blocks new entries for a
+fixed window after a stop-loss specifically to break that loop; comparing
+it against two alternatives (raising the re-entry confidence bar, resetting
+peak_value to the post-liquidation value) in the same backtest showed the
+cooldown cut stop-loss count ~14x and fee drag from ~73% to ~24% of capital
+-- by far the most effective of the three.
 
 compute_rebalance() is pure (no DB access) so backtest.py can replay the
 exact same sizing/stop-loss logic offline against historical data.
@@ -31,6 +43,8 @@ REBALANCE_THRESHOLD = 0.25             # only trade if actual allocation is off 
                                         # (backtest.py showed 0.10 causes excessive fee-eroding churn -- confidence
                                         # shifts a few points step to step, which crosses a tight threshold constantly)
 STOP_LOSS_DRAWDOWN = 0.15              # force to cash if value falls more than this fraction below its running peak
+STOP_LOSS_COOLDOWN_CANDLES = 40        # ~10h at 15-min candles -- no re-entry for this many candles after a stop-loss
+                                        # (see module docstring: without this, re-entry gets stopped out again almost every time)
 
 
 def get_portfolio_state(db) -> dict:
@@ -63,30 +77,40 @@ def _target_allocation(direction: str, confidence: float) -> float:
 
 
 def compute_rebalance(cash: float, xrp: float, price: float, direction: str,
-                       confidence: float, peak_value: float) -> dict:
+                       confidence: float, peak_value: float, cooldown_remaining: int = 0) -> dict:
     """Pure function, no DB access -- shared by maybe_trade() (live) and
     backtest.py (historical replay).
 
-    Returns {"action": "BUY"/"SELL"/"HOLD", "usd_amount": float,
-    "xrp_amount": float, "new_peak_value": float, "reason": str}.
-    Only the amount matching `action` is meaningful (usd_amount for BUY,
-    xrp_amount for SELL); both are 0 for HOLD.
+    `cooldown_remaining` is how many candles are left in a post-stop-loss
+    re-entry block (0 = free to trade). Returns {"action": "BUY"/"SELL"/"HOLD",
+    "usd_amount": float, "xrp_amount": float, "new_peak_value": float,
+    "new_cooldown_remaining": int, "reason": str}. Only the amount matching
+    `action` is meaningful (usd_amount for BUY, xrp_amount for SELL); both
+    are 0 for HOLD.
     """
     value = cash + xrp * price
     peak_value = max(peak_value, value)
 
     if value <= 0:
-        return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0, "new_peak_value": peak_value, "reason": ""}
+        return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0,
+                "new_peak_value": peak_value, "new_cooldown_remaining": cooldown_remaining, "reason": ""}
 
-    # Stop-loss takes priority over any signal.
+    # Stop-loss takes priority over any signal, and starts a cooldown so the
+    # very next candle can't immediately re-enter and re-trigger it.
     if xrp > 0 and value <= peak_value * (1 - STOP_LOSS_DRAWDOWN):
         return {
             "action": "SELL", "usd_amount": 0.0, "xrp_amount": xrp,
-            "new_peak_value": peak_value, "reason": "Stop-loss tetiklendi",
+            "new_peak_value": peak_value, "new_cooldown_remaining": STOP_LOSS_COOLDOWN_CANDLES,
+            "reason": "Stop-loss tetiklendi",
         }
 
+    if cooldown_remaining > 0:
+        return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0,
+                "new_peak_value": peak_value, "new_cooldown_remaining": cooldown_remaining - 1, "reason": ""}
+
     if confidence < MIN_CONFIDENCE_TO_TRADE:
-        return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0, "new_peak_value": peak_value, "reason": ""}
+        return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0,
+                "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": ""}
 
     target_fraction = _target_allocation(direction, confidence)
     target_xrp_value = value * target_fraction
@@ -97,18 +121,20 @@ def compute_rebalance(cash: float, xrp: float, price: float, direction: str,
         xrp_to_sell = min(xrp, (current_xrp_value - target_xrp_value) / price)
         return {
             "action": "SELL", "usd_amount": 0.0, "xrp_amount": xrp_to_sell,
-            "new_peak_value": peak_value, "reason": "Hedef pozisyona rebalance (azalt)",
+            "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": "Hedef pozisyona rebalance (azalt)",
         }
     if drift < -REBALANCE_THRESHOLD:
         usd_to_spend = min(cash, target_xrp_value - current_xrp_value)
         if usd_to_spend <= 0:
-            return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0, "new_peak_value": peak_value, "reason": ""}
+            return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0,
+                    "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": ""}
         return {
             "action": "BUY", "usd_amount": usd_to_spend, "xrp_amount": 0.0,
-            "new_peak_value": peak_value, "reason": "Hedef pozisyona rebalance (artir)",
+            "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": "Hedef pozisyona rebalance (artir)",
         }
 
-    return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0, "new_peak_value": peak_value, "reason": ""}
+    return {"action": "HOLD", "usd_amount": 0.0, "xrp_amount": 0.0,
+            "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": ""}
 
 
 def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float, price: float) -> None:
@@ -117,14 +143,17 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
     state = get_portfolio_state(db)
     cash, xrp = float(state["cash_usd"]), float(state["xrp_amount"])
     peak_value = float(state.get("peak_value") or STARTING_CASH)
+    cooldown_remaining = int(state.get("stop_loss_cooldown") or 0)
 
-    decision = compute_rebalance(cash, xrp, price, direction, confidence, peak_value)
+    decision = compute_rebalance(cash, xrp, price, direction, confidence, peak_value, cooldown_remaining)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     if decision["action"] == "HOLD":
-        if decision["new_peak_value"] != peak_value:
+        if decision["new_peak_value"] != peak_value or decision["new_cooldown_remaining"] != cooldown_remaining:
             db.table("portfolio_state").update({
-                "peak_value": decision["new_peak_value"], "updated_at": now_iso,
+                "peak_value": decision["new_peak_value"],
+                "stop_loss_cooldown": decision["new_cooldown_remaining"],
+                "updated_at": now_iso,
             }).eq("id", 1).execute()
         return
 
@@ -137,7 +166,9 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
 
         db.table("portfolio_state").update({
             "cash_usd": new_cash, "xrp_amount": new_xrp, "position": "LONG",
-            "peak_value": decision["new_peak_value"], "updated_at": now_iso,
+            "peak_value": decision["new_peak_value"],
+            "stop_loss_cooldown": decision["new_cooldown_remaining"],
+            "updated_at": now_iso,
         }).eq("id", 1).execute()
         _record_trade(db, "BUY", price, xrp_bought, gross_usd, fee_usd, new_cash, new_xrp,
                        prediction_id, decision["reason"])
@@ -153,7 +184,9 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
         db.table("portfolio_state").update({
             "cash_usd": new_cash, "xrp_amount": new_xrp,
             "position": "LONG" if new_xrp > 0 else "CASH",
-            "peak_value": decision["new_peak_value"], "updated_at": now_iso,
+            "peak_value": decision["new_peak_value"],
+            "stop_loss_cooldown": decision["new_cooldown_remaining"],
+            "updated_at": now_iso,
         }).eq("id", 1).execute()
         _record_trade(db, "SELL", price, xrp_to_sell, gross_usd, fee_usd, new_cash, new_xrp,
                        prediction_id, decision["reason"])

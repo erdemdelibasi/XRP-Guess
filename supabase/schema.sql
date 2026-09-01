@@ -78,6 +78,10 @@ create table if not exists portfolio_state (
   xrp_amount             numeric not null default 0,
   position               text not null default 'CASH' check (position in ('CASH', 'LONG')),
   peak_value             numeric not null default 1000,
+  -- Candles left before a new position can be opened after a stop-loss (see
+  -- trading.py:STOP_LOSS_COOLDOWN_CANDLES) -- without this, re-entering right
+  -- after a stop-loss almost always re-triggers it on the very next candle.
+  stop_loss_cooldown     int not null default 0,
   updated_at             timestamptz not null default now(),
   check (id = 1)
 );
