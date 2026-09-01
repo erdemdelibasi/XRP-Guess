@@ -71,7 +71,42 @@ def add_cross_asset_correlation(xrp: pd.DataFrame, other: pd.DataFrame, label: s
     other_ret = other["close"].pct_change().reindex(out.index)
     out[f"corr_{label}"] = xrp_ret.rolling(window).corr(other_ret)
     out[f"{label}_return_1h"] = other_ret
+    out[f"lead_lag_{label}"] = _score_lead_lag(out["close"], other["close"])
     return out
+
+
+def compute_lead_lag(xrp_close: pd.Series, other_close: pd.Series, max_lag: int = 8, window: int = 192) -> tuple[int, float]:
+    """Finds which lag (1..max_lag candles, i.e. 15min-2h) of `other`'s returns
+    best correlates with XRP's concurrent returns over the trailing `window`
+    candles. Returns (best_lag, correlation_at_that_lag); (0, 0.0) if nothing
+    beats a same-time comparison or there isn't enough data."""
+    xrp_ret = xrp_close.pct_change().tail(window)
+    other_ret = other_close.pct_change()
+
+    best_lag, best_corr = 0, 0.0
+    for lag in range(1, max_lag + 1):
+        shifted = other_ret.shift(lag).reindex(xrp_ret.index)
+        if shifted.notna().sum() < window // 2:
+            continue
+        corr = xrp_ret.corr(shifted)
+        if pd.notna(corr) and abs(corr) > abs(best_corr):
+            best_lag, best_corr = lag, float(corr)
+    return best_lag, best_corr
+
+
+def _score_lead_lag(xrp_close: pd.Series, other_close: pd.Series) -> float:
+    """If `other` historically leads XRP by some lag, use the portion of its
+    move within that lag window which XRP hasn't caught up to yet as a
+    forward-looking signal (e.g. BTC leads XRP by 2 candles and just moved
+    +1% over the last 2 candles -> XRP is expected to catch up)."""
+    lag, corr = compute_lead_lag(xrp_close, other_close)
+    if lag == 0 or abs(corr) < 0.15:
+        return 0.0
+    catch_up_move = other_close.pct_change(lag).iloc[-1]
+    if pd.isna(catch_up_move):
+        return 0.0
+    sign = 1.0 if corr > 0 else -1.0
+    return float(np.clip(sign * catch_up_move * 30, -1, 1))
 
 
 def _score_rsi(rsi: float) -> float:
@@ -127,13 +162,21 @@ def _score_market_correlation(corr_btc: float, btc_return_1h: float, corr_eth: f
     return sum(signals) / len(signals)
 
 
+def _score_lead_lag_combined(lead_lag_btc: float, lead_lag_eth: float) -> float:
+    values = [v for v in (lead_lag_btc, lead_lag_eth) if pd.notna(v)]
+    if not values:
+        return 0.0
+    return float(np.clip(sum(values) / len(values), -1, 1))
+
+
 WEIGHTS = {
-    "rsi": 0.22,
-    "macd": 0.22,
-    "ema_cross": 0.18,
-    "bollinger": 0.13,
-    "volume": 0.13,
-    "market": 0.12,
+    "rsi": 0.20,
+    "macd": 0.20,
+    "ema_cross": 0.16,
+    "bollinger": 0.12,
+    "volume": 0.12,
+    "market": 0.10,
+    "lead_lag": 0.10,
 }
 
 
@@ -154,6 +197,7 @@ def technical_signal(df_with_indicators: pd.DataFrame) -> dict:
             last.get("corr_btc"), last.get("btc_return_1h"),
             last.get("corr_eth"), last.get("eth_return_1h"),
         ),
+        "lead_lag": _score_lead_lag_combined(last.get("lead_lag_btc"), last.get("lead_lag_eth")),
     }
     combined = sum(scores[k] * WEIGHTS[k] for k in WEIGHTS)
     combined = float(np.clip(combined, -1, 1))
