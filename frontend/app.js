@@ -21,23 +21,9 @@ function showApp() {
 }
 
 function setupGate() {
-  if (localStorage.getItem(AUTH_KEY) === "1") {
-    showApp();
-    return;
-  }
-  const form = document.getElementById("gate-form");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const value = document.getElementById("gate-password").value;
-    const hash = await sha256Hex(value);
-    if (hash === CONFIG.PASSWORD_HASH) {
-      localStorage.setItem(AUTH_KEY, "1");
-      document.getElementById("gate-error").hidden = true;
-      showApp();
-    } else {
-      document.getElementById("gate-error").hidden = false;
-    }
-  });
+  // Parola kapısı geçici olarak devre dışı -- geri açmak için bu fonksiyonu
+  // eski haline getir (git log'da mevcut).
+  showApp();
 }
 
 function supabaseHeaders() {
