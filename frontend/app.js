@@ -1,30 +1,8 @@
-const AUTH_KEY = "xrp_tahmin_auth_ok";
 let allPredictions = [];
 let pieChart = null;
 let currentRangeDays = 7;
 let portfolioState = null;
 let lastLivePrice = null;
-
-async function sha256Hex(text) {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function showApp() {
-  document.getElementById("password-gate").hidden = true;
-  document.getElementById("app").hidden = false;
-  window.scrollTo(0, 0);
-  init();
-}
-
-function setupGate() {
-  // Parola kapısı geçici olarak devre dışı -- geri açmak için bu fonksiyonu
-  // eski haline getir (git log'da mevcut).
-  showApp();
-}
 
 function supabaseHeaders() {
   return {
@@ -331,4 +309,4 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 }
 
-setupGate();
+init();
