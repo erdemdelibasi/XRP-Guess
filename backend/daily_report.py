@@ -23,7 +23,7 @@ import trading
 TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
 TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
              "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber"}
+COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri"}
 MIN_SAMPLES_FOR_BEST = 5  # below this, a high accuracy is just noise -- don't crown it "best of the day"
 
 
@@ -190,10 +190,7 @@ def render_text(report: dict) -> str:
 
     w = report["weights"]
     lines += ["", "GÜNCEL ENSEMBLE AĞIRLIKLARI"]
-    lines.append(
-        f"- Teknik %{w['technical'] * 100:.1f} | ML %{w['ml'] * 100:.1f} | "
-        f"Balina %{w['whale'] * 100:.1f} | Haber %{w['news'] * 100:.1f}"
-    )
+    lines.append("- " + " | ".join(f"{COMPONENT_LABELS[c]} %{w[c] * 100:.1f}" for c in ensemble.COMPONENTS))
 
     lines += ["", "Bu bir yatırım tavsiyesi değildir."]
     return "\n".join(lines)
@@ -273,8 +270,7 @@ def render_html(report: dict) -> str:
     w = report["weights"]
     weight_rows = [_row(
         "Dağılım",
-        f"Teknik %{w['technical'] * 100:.1f} · ML %{w['ml'] * 100:.1f} · "
-        f"Balina %{w['whale'] * 100:.1f} · Haber %{w['news'] * 100:.1f}",
+        " · ".join(f"{COMPONENT_LABELS[c]} %{w[c] * 100:.1f}" for c in ensemble.COMPONENTS),
     )]
 
     body = (

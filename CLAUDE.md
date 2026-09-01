@@ -37,25 +37,35 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `portfolio_state`/`trades` tabloları sanal.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
-- Yön sinyali dört bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
-  ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag dahil),
-  ML model (`ml_model.py`), XRPL balina/borsa akışı (`whale_signal.py`,
-  XRPSCAN public API) ve haber/düzenleyici sentiment (`news_signal.py`,
-  Google News RSS). **İkisi de anahtar gerektirmez, tamamen ücretsiz** —
-  CryptoPanic denendi ama ücretsiz katmanını kaldırmış (en ucuz plan
-  $50/hafta), o yüzden Google News RSS'e geçildi.
+- Yön sinyali beş bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
+  ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag +
+  taker buy ratio dahil), ML model (`ml_model.py`, aynı taker buy ratio bir
+  FEATURE_COLUMNS girdisi olarak da kullanılır), XRPL balina/borsa akışı
+  (`whale_signal.py`, XRPSCAN public API), haber/düzenleyici sentiment
+  (`news_signal.py`, Google News RSS — CryptoPanic denendi ama ücretsiz
+  katmanını kaldırmış, $50/hafta'dan başlıyor, o yüzden vazgeçildi), ve
+  emir defteri dengesizliği (`orderbook_signal.py`, Binance `/api/v3/depth`).
+  Hepsi anahtar gerektirmez. **`orderbook` (ve `whale`/`news`) canlı-only —
+  geçmiş arşivi yok, bu yüzden `backend/backtest.py` sadece technical+ML'i
+  test edebilir**, bu sınırlama backtest raporunda açıkça belirtilir.
   Ağırlıklar `retrain.py` tarafından günlük olarak son 14 günlük başarı
   oranına göre güncellenir (`model_state` tablosu). `ensemble.recompute_weights`
   her bileşeni **bağımsız** olarak günceller — bir bileşenin (ör. news)
   henüz yeterli geçmişi yoksa sadece o bileşen varsayılan ağırlıkta kalır,
-  diğerlerinin kendi aralarında ayarlanmasını engellemez (bu bilinçli bir
-  düzeltme — ilk versiyon yanlışlıkla TÜM bileşenler hazır olana kadar
-  hiçbirini güncellemiyordu). `whale`/`news` çoğu 15dk'da "sessiz"
-  (confidence=0) kalır — bu bir hata değil, `retrain.py` bu satırları isabet
-  oranına dahil etmiyor (abstention). Yeni bir bileşen eklemek istersen
-  `ensemble.COMPONENTS`'e ekleyip `predictions` tablosuna aynı 5-kolonluk
-  örüntüyü (`{c}_direction/confidence/pct_change/price/correct` +
-  `weight_{c}`) uygulaman yeterli.
+  diğerlerinin kendi aralarında ayarlanmasını engellemez. `whale`/`news`/
+  `orderbook` sık sık "sessiz" (confidence=0) kalır — bu bir hata değil,
+  `retrain.py` bu satırları isabet oranına dahil etmiyor (abstention). Yeni
+  bir bileşen eklemek istersen `ensemble.COMPONENTS`+`COLUMN_PREFIX`'e
+  ekleyip `predictions` tablosuna aynı 5-kolonluk örüntüyü
+  (`{prefix}_direction/confidence/pct_change/price/correct` + `weight_{c}`)
+  uygulaman yeterli — `retrain.py`/`daily_report.py` tamamen bu listeler
+  üzerinden döngü kurduğu için başka kod değişikliği gerekmez.
+- **Model uyumluluk kontrolü şart**: `FEATURE_COLUMNS`'a yeni bir özellik
+  eklersen, repoda committed duran eski `models/xrp_model.joblib` artık
+  uyumsuz olur. `predict.py`, modelin `n_features_in_`'ini
+  `len(ml_model.FEATURE_COLUMNS)` ile karşılaştırıp uyuşmazsa otomatik
+  bootstrap-retrain yapar (bkz. `predict.py:main`) — bu kontrolü kaldırma,
+  aksi halde canlı çalışma `ValueError` ile çöker.
 
 - `daily_report.py` yeni bir tablo kullanmaz — dünkü 18:00'deki portföy
   durumunu `trades` tablosunu geriye doğru "replay" ederek (o zamandan

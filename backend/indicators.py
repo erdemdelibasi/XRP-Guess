@@ -38,6 +38,11 @@ def add_indicator_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["volume_ma20"] = out["volume"].rolling(20 * p).mean()
     out["volume_ratio"] = out["volume"] / out["volume_ma20"]
 
+    # Fraction of each candle's volume that was aggressive (taker) buying,
+    # not just derived from price shape like the indicators above -- 0.5 is
+    # balanced, >0.5 means buyers were hitting the ask more than sellers hit the bid.
+    out["taker_buy_ratio"] = out["taker_buy_base"] / out["volume"]
+
     # Column names denote the real-world duration they cover, not the raw
     # candle count -- return_1h is still "return over the last hour".
     out["return_1h"] = close.pct_change(1 * p)
@@ -169,14 +174,21 @@ def _score_lead_lag_combined(lead_lag_btc: float, lead_lag_eth: float) -> float:
     return float(np.clip(sum(values) / len(values), -1, 1))
 
 
+def _score_taker_buy_ratio(ratio: float) -> float:
+    if pd.isna(ratio):
+        return 0.0
+    return float(np.clip((ratio - 0.5) * 4, -1, 1))
+
+
 WEIGHTS = {
-    "rsi": 0.20,
-    "macd": 0.20,
-    "ema_cross": 0.16,
-    "bollinger": 0.12,
-    "volume": 0.12,
-    "market": 0.10,
-    "lead_lag": 0.10,
+    "rsi": 0.18,
+    "macd": 0.18,
+    "ema_cross": 0.14,
+    "bollinger": 0.11,
+    "volume": 0.11,
+    "market": 0.09,
+    "lead_lag": 0.09,
+    "taker_buy": 0.10,
 }
 
 
@@ -198,6 +210,7 @@ def technical_signal(df_with_indicators: pd.DataFrame) -> dict:
             last.get("corr_eth"), last.get("eth_return_1h"),
         ),
         "lead_lag": _score_lead_lag_combined(last.get("lead_lag_btc"), last.get("lead_lag_eth")),
+        "taker_buy": _score_taker_buy_ratio(last.get("taker_buy_ratio")),
     }
     combined = sum(scores[k] * WEIGHTS[k] for k in WEIGHTS)
     combined = float(np.clip(combined, -1, 1))

@@ -18,6 +18,7 @@ FEATURE_COLUMNS = [
     "rsi14", "macd", "macd_signal", "macd_hist",
     "ema9", "ema21", "sma50", "bb_pct",
     "volume_ratio", "return_1h", "return_6h", "return_24h",
+    "taker_buy_ratio",
 ]
 
 

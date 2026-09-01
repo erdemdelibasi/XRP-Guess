@@ -12,7 +12,7 @@ KLINE_COLUMNS = [
     "close_time", "quote_asset_volume", "num_trades",
     "taker_buy_base", "taker_buy_quote", "ignore",
 ]
-NUMERIC_COLUMNS = ["open", "high", "low", "close", "volume"]
+NUMERIC_COLUMNS = ["open", "high", "low", "close", "volume", "taker_buy_base"]
 
 
 def get_klines(symbol: str, interval: str = "15m", limit: int = 500, end_time_ms: int | None = None) -> pd.DataFrame:
@@ -24,13 +24,13 @@ def get_klines(symbol: str, interval: str = "15m", limit: int = 500, end_time_ms
     resp.raise_for_status()
     df = pd.DataFrame(resp.json(), columns=KLINE_COLUMNS)
     if df.empty:
-        return df.assign(**{c: [] for c in ["open_time", "close_time", "open", "high", "low", "close", "volume"]})[
-            ["open_time", "close_time", "open", "high", "low", "close", "volume"]
+        return df.assign(**{c: [] for c in ["open_time", "close_time", "open", "high", "low", "close", "volume", "taker_buy_base"]})[
+            ["open_time", "close_time", "open", "high", "low", "close", "volume", "taker_buy_base"]
         ]
     df[NUMERIC_COLUMNS] = df[NUMERIC_COLUMNS].astype(float)
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
-    return df[["open_time", "close_time", "open", "high", "low", "close", "volume"]]
+    return df[["open_time", "close_time", "open", "high", "low", "close", "volume", "taker_buy_base"]]
 
 
 def get_klines_history(symbol: str, interval: str = "15m", total: int = 4000) -> pd.DataFrame:
@@ -50,7 +50,7 @@ def get_klines_history(symbol: str, interval: str = "15m", total: int = 4000) ->
         if len(batch) < min(remaining + len(batch), 1000):
             break
     if not frames:
-        return pd.DataFrame(columns=["open_time", "close_time", "open", "high", "low", "close", "volume"])
+        return pd.DataFrame(columns=["open_time", "close_time", "open", "high", "low", "close", "volume", "taker_buy_base"])
     return (
         pd.concat(frames)
         .drop_duplicates(subset="open_time")
@@ -67,3 +67,23 @@ def get_current_price(symbol: str) -> float:
     )
     resp.raise_for_status()
     return float(resp.json()["price"])
+
+
+def get_order_book_imbalance(symbol: str, limit: int = 100) -> float:
+    """Point-in-time snapshot only -- Binance doesn't offer a free historical
+    order-book archive, so this can only ever be used live (not backtested).
+    Returns (bid_volume - ask_volume) / (bid_volume + ask_volume) across the
+    top `limit` price levels; >0 means more buy-side depth."""
+    resp = requests.get(
+        f"{BASE_URL}/api/v3/depth",
+        params={"symbol": symbol, "limit": limit},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    bid_volume = sum(float(qty) for _, qty in data["bids"])
+    ask_volume = sum(float(qty) for _, qty in data["asks"])
+    total = bid_volume + ask_volume
+    if total == 0:
+        return 0.0
+    return (bid_volume - ask_volume) / total

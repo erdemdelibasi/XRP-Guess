@@ -28,10 +28,15 @@ create table if not exists predictions (
   news_confidence       numeric,
   news_pct_change       numeric,
   news_price            numeric,
+  orderbook_direction   text,
+  orderbook_confidence  numeric,
+  orderbook_pct_change  numeric,
+  orderbook_price       numeric,
   weight_technical      numeric,
   weight_ml             numeric,
   weight_whale          numeric,
   weight_news           numeric,
+  weight_orderbook      numeric,
   model_version         text,
 
   resolved_at           timestamptz,
@@ -41,7 +46,8 @@ create table if not exists predictions (
   tech_correct          boolean,
   ml_correct            boolean,
   whale_correct         boolean,
-  news_correct          boolean
+  news_correct          boolean,
+  orderbook_correct     boolean
 );
 
 create index if not exists predictions_created_at_idx on predictions (created_at desc);
@@ -49,17 +55,18 @@ create index if not exists predictions_target_time_idx on predictions (target_ti
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
 
 create table if not exists model_state (
-  component        text primary key check (component in ('technical', 'ml', 'whale', 'news')),
-  weight           numeric not null default 0.25,
+  component        text primary key check (component in ('technical', 'ml', 'whale', 'news', 'orderbook')),
+  weight           numeric not null default 0.2,
   rolling_accuracy numeric,
   updated_at       timestamptz not null default now()
 );
 
 insert into model_state (component, weight) values
-  ('technical', 0.35),
-  ('ml', 0.35),
-  ('whale', 0.15),
-  ('news', 0.15)
+  ('technical', 0.28),
+  ('ml', 0.28),
+  ('whale', 0.14),
+  ('news', 0.12),
+  ('orderbook', 0.18)
 on conflict (component) do nothing;
 
 -- Virtual $1000 paper-trading portfolio: simulates automatically buying/
@@ -70,6 +77,7 @@ create table if not exists portfolio_state (
   cash_usd               numeric not null default 1000,
   xrp_amount             numeric not null default 0,
   position               text not null default 'CASH' check (position in ('CASH', 'LONG')),
+  peak_value             numeric not null default 1000,
   updated_at             timestamptz not null default now(),
   check (id = 1)
 );

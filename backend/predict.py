@@ -1,12 +1,13 @@
 """Entry point run every 15 minutes by GitHub Actions.
 
 Each run predicts the price at the *next* quarter-hour clock mark (e.g. a run
-at 18:07 targets 18:15; a run at 18:16 targets 18:30) using four independent
+at 18:07 targets 18:15; a run at 18:16 targets 18:30) using five independent
 signal components -- a rule-based technical signal, an ML model, an on-chain
-XRPL whale/exchange-flow signal, and a news/regulatory sentiment signal --
-combined by ensemble.py. Over the course of an hour this naturally produces
-four checkpoints -- :15, :30, :45, :00 -- each with its own expected
-percentage change and target price, from every method.
+XRPL whale/exchange-flow signal, a news/regulatory sentiment signal, and a
+live order-book imbalance signal -- combined by ensemble.py. Over the course
+of an hour this naturally produces four checkpoints -- :15, :30, :45, :00 --
+each with its own expected percentage change and target price, from every
+method.
 
 No Binance API key is used or required -- only public market data endpoints.
 
@@ -28,6 +29,7 @@ from indicators import (
 )
 import ml_model
 import news_signal as news_signal_module
+import orderbook_signal as orderbook_signal_module
 import trading
 import whale_signal as whale_signal_module
 
@@ -63,6 +65,7 @@ def resolve_due_predictions(db, current_price: float) -> None:
         ml_correct = row.get("ml_direction") is not None and actual_direction == row["ml_direction"]
         whale_correct = row.get("whale_direction") is not None and actual_direction == row["whale_direction"]
         news_correct = row.get("news_direction") is not None and actual_direction == row["news_direction"]
+        orderbook_correct = row.get("orderbook_direction") is not None and actual_direction == row["orderbook_direction"]
 
         db.table("predictions").update({
             "resolved_at": now_iso,
@@ -73,6 +76,7 @@ def resolve_due_predictions(db, current_price: float) -> None:
             "ml_correct": ml_correct,
             "whale_correct": whale_correct,
             "news_correct": news_correct,
+            "orderbook_correct": orderbook_correct,
         }).eq("id", row["id"]).execute()
         print(f"Resolved prediction {row['id']} (target {row['target_time']}): "
               f"predicted={row['predicted_direction']} actual={actual_direction} correct={correct}")
@@ -120,8 +124,15 @@ def main() -> int:
 
     model = ml_model.load_model()
     model_version = "bootstrap"
+    # A model saved before a FEATURE_COLUMNS change (e.g. a new indicator
+    # added) is incompatible and would raise on the ml_signal() call below --
+    # treat that exactly like "no model yet" and retrain on the spot rather
+    # than crashing the whole run.
+    if model is not None and getattr(model, "n_features_in_", None) != len(ml_model.FEATURE_COLUMNS):
+        print("Saved model's feature count doesn't match FEATURE_COLUMNS anymore -- treating as stale.")
+        model = None
     if model is None:
-        print("No trained model found yet -- bootstrap-training one now from historical klines.")
+        print("No compatible trained model found -- bootstrap-training one now from historical klines.")
         history = get_klines_history(SYMBOL, interval=INTERVAL, total=BOOTSTRAP_TRAINING_CANDLES)
         model, metrics = ml_model.train_model(history)
         ml_model.save_model(model)
@@ -131,9 +142,10 @@ def main() -> int:
     ml = ml_model.ml_signal(model, xrp)
     whale = safe_signal(whale_signal_module.whale_signal, current_price, label="whale")
     news = safe_signal(news_signal_module.news_signal, label="news")
+    orderbook = safe_signal(orderbook_signal_module.orderbook_signal, label="orderbook")
 
     weights = get_ensemble_weights(db)
-    signals = {"technical": tech, "ml": ml, "whale": whale, "news": news}
+    signals = {"technical": tech, "ml": ml, "whale": whale, "news": news, "orderbook": orderbook}
     final = ensemble.combine(signals, weights)
 
     volatility = recent_volatility(xrp)
@@ -141,6 +153,7 @@ def main() -> int:
     ml_pct = estimate_pct_change(ml["score"], volatility)
     whale_pct = estimate_pct_change(whale["score"], volatility)
     news_pct = estimate_pct_change(news["score"], volatility)
+    orderbook_pct = estimate_pct_change(orderbook["score"], volatility)
     final_pct = estimate_pct_change(final["score"], volatility)
 
     target_time = next_quarter_hour(now)
@@ -169,10 +182,15 @@ def main() -> int:
         "news_confidence": news["confidence"],
         "news_pct_change": news_pct,
         "news_price": current_price * (1 + news_pct),
+        "orderbook_direction": orderbook["direction"],
+        "orderbook_confidence": orderbook["confidence"],
+        "orderbook_pct_change": orderbook_pct,
+        "orderbook_price": current_price * (1 + orderbook_pct),
         "weight_technical": weights["technical"],
         "weight_ml": weights["ml"],
         "weight_whale": weights["whale"],
         "weight_news": weights["news"],
+        "weight_orderbook": weights["orderbook"],
         "model_version": model_version,
     }).execute()
 
@@ -180,7 +198,7 @@ def main() -> int:
           f"{final['direction']} {final_pct * 100:+.2f}% -> {current_price * (1 + final_pct):.4f} "
           f"[tech={tech['direction']}/{tech_pct * 100:+.2f}%, ml={ml['direction']}/{ml_pct * 100:+.2f}%, "
           f"whale={whale['direction']}/{whale['confidence']:.2f}, news={news['direction']}/{news['confidence']:.2f}, "
-          f"weights={weights}]")
+          f"orderbook={orderbook['direction']}/{orderbook['confidence']:.2f}, weights={weights}]")
 
     prediction_id = inserted.data[0]["id"] if inserted.data else None
     trading.maybe_trade(db, prediction_id, final["direction"], final["confidence"], current_price)

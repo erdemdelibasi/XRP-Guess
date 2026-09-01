@@ -6,11 +6,12 @@ her 15 dakikada bir bir sonraki çeyrek-saat işareti için yön (artış/azalı
 yüzde değişim ve hedef fiyat tahmini üreten, tahminleri loglayan ve başarı
 oranını gösteren bir panel. iPhone'da "Ana Ekrana Ekle" ile app gibi çalışır.
 
-Tahmin dört bağımsız kaynaktan gelen sinyalin ağırlıklı birleşimidir:
+Tahmin beş bağımsız kaynaktan gelen sinyalin ağırlıklı birleşimidir:
 **teknik indikatörler** (RSI/MACD/EMA/Bollinger + BTC-ETH eşzamanlı ve
-gecikmeli korelasyon), **ML modeli**, **XRPL balina/borsa akışı** (zincir
-üzerinden büyük transferler) ve **haber/düzenleyici sentiment** (SEC-Ripple
-davası gibi başlıklar). Her birinin ağırlığı kendi geçmiş isabet oranına göre
+gecikmeli korelasyon + taker alım oranı), **ML modeli**, **XRPL balina/borsa
+akışı** (zincir üzerinden büyük transferler), **haber/düzenleyici sentiment**
+(SEC-Ripple davası gibi başlıklar) ve **emir defteri dengesizliği** (anlık
+alım/satım derinliği). Her birinin ağırlığı kendi geçmiş isabet oranına göre
 günlük olarak yeniden ayarlanır.
 
 **Bu bir yatırım tavsiyesi aracı değildir.** Binance hesabına hiç bağlanmaz,
@@ -97,10 +98,18 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 ## Nasıl çalışıyor
 - Her 15 dakikada bir (`.github/workflows/predict.yml`, `:01/:16/:31/:46`)
   GitHub Actions, Binance'tan XRP/BTC/ETH'nin 15 dakikalık mum verisini çeker
-  ve dört bağımsız sinyali hesaplar:
+  ve beş bağımsız sinyali hesaplar:
   - **Teknik** (`indicators.py`): RSI, MACD, EMA kesişimi, Bollinger, hacim,
-    BTC/ETH ile eşzamanlı korelasyon, ve BTC/ETH'nin XRP'yi kaç periyot
-    (15dk-2sa) önden yönlendirdiğini bulan gecikmeli (lead-lag) korelasyon.
+    BTC/ETH ile eşzamanlı korelasyon, BTC/ETH'nin XRP'yi kaç periyot
+    (15dk-2sa) önden yönlendirdiğini bulan gecikmeli (lead-lag) korelasyon,
+    ve "taker buy ratio" (bir mumdaki hacmin ne kadarının agresif alım
+    olduğu — sadece fiyat şeklinden değil, kimin işlemi başlattığından gelen
+    bir sinyal).
+  - **Emir defteri dengesizliği** (`orderbook_signal.py`): Binance'ın anlık
+    emir defteri görüntüsünden (`/api/v3/depth`, anahtar gerekmez) alış/satış
+    tarafındaki hacim dengesizliğini ölçer. Bu **anlık bir görüntüdür**,
+    geçmiş arşivi yoktur — bu yüzden ayrı bir üst-seviye bileşen olarak
+    tutulur ve backtest'e dahil edilemez, sadece canlı çalışır.
   - **ML** (`ml_model.py`): geçmiş 15-dakikalık verilerle eğitilmiş bir
     sınıflandırıcı.
   - **Balina/borsa akışı** (`whale_signal.py`): XRP Ledger tamamen herkese
@@ -119,15 +128,15 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
     diğer bileşenlere göre daha zayıf/gürültülü bir sinyaldir — bu yüzden
     ensemble'daki payı küçük tutulur. Eşleşen başlık yoksa sessiz kalır.
 
-  Bu dört sinyal `ensemble.py` içinde, her birinin kendi geçmiş isabet
+  Bu beş sinyal `ensemble.py` içinde, her birinin kendi geçmiş isabet
   oranıyla orantılı ağırlıklarla birleştirilip **bir sonraki çeyrek-saat
   işareti** (örn. 18:07'de çalışırsa 18:15'i) için yön, yüzde değişim ve
   hedef fiyat tahmini olarak loglanır. Bir saat içinde böylece 4 ayrı tahmin
   birikir (18:15, 18:30, 18:45, 19:00 gibi). Aynı çalışma, hedef zamanı
   gelmiş önceki tahminleri gerçekleşen fiyatla karşılaştırıp doğru/yanlış
-  olarak işaretler (dört bileşenin her biri için ayrı ayrı).
+  olarak işaretler (beş bileşenin her biri için ayrı ayrı).
 - Her gün (`daily_retrain.yml`) ML modeli ~41 günlük 15-dakikalık geçmişle
-  yeniden eğitilir ve dört bileşenin de son 14 günlük başarı oranına göre
+  yeniden eğitilir ve beş bileşenin de son 14 günlük başarı oranına göre
   birleştirme ağırlıkları güncellenir — sistemin kendini zamanla ayarlaması
   bu şekilde olur. Balina/haber gibi çoğu zaman sessiz kalan bileşenler için
   yeterli "konuştuğu" örnek birikene kadar (asgari 20 sessiz-olmayan
