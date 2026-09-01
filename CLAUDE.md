@@ -90,6 +90,18 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   (`{prefix}_direction/confidence/pct_change/price/correct` + `weight_{c}`)
   uygulaman yeterli — `retrain.py`/`daily_report.py` tamamen bu listeler
   üzerinden döngü kurduğu için başka kod değişikliği gerekmez.
+  **`whale`/`news` canlı veride hep UP diyordu** (news 25/25, whale 24/27) —
+  kalibrasyon değil, iki ayrı mantık hatasıydı: `news_signal.py`'de kısa
+  anahtar kelimeler (`ban`, `sue`, `sec`, `hack`) substring eşleşmesiyle
+  yanlış kelimelerin içinde de yakalanıyordu (`"ban"` → `"banking"` içinde),
+  düzeltildi (kelime-sınırı eşleşmesi + kaybolan çekim biçimleri elle
+  eklendi — `_keyword_hits()`). `whale_signal.py`'de XRPSCAN'de 672 borsa
+  etiketli hesap varken kod sadece ilk 8 eşleşmeyi alıyordu ve bunların
+  8'i de Binance çıkıyordu (Coinbase 552, OKX 1 hesabı hiç izlenmiyordu) —
+  artık `get_exchange_accounts()` borsalar arası round-robin yapıyor. Bu
+  düzeltmelerin gerçek etkisi ancak birkaç haftalık yeni canlı veriyle
+  görülebilir (backtest edilemiyorlar) — `predictions` tablosundan tekrar
+  kontrol etmeden "düzeldi" deme.
 - **Model uyumluluk kontrolü şart**: `FEATURE_COLUMNS`'a yeni bir özellik
   eklersen, repoda committed duran eski `models/xrp_model.joblib` artık
   uyumsuz olur. `predict.py`, modelin `n_features_in_`'ini
