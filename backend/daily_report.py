@@ -11,6 +11,7 @@ import os
 import smtplib
 import sys
 from datetime import datetime, timedelta, timezone
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from db import get_client
@@ -143,9 +144,7 @@ def build_report(db) -> dict:
     }
 
 
-def render_email(report: dict) -> tuple[str, str]:
-    subject = f"XRP Tahmin Paneli - Günlük Özet ({format_tr_date(report['end'])})"
-
+def render_text(report: dict) -> str:
     lines = [
         "Merhaba Erdem,", "",
         f"Dün {report['start'].strftime('%H:%M')} - bugün {report['end'].strftime('%H:%M')} arasında:", "",
@@ -197,18 +196,134 @@ def render_email(report: dict) -> tuple[str, str]:
     )
 
     lines += ["", "Bu bir yatırım tavsiyesi değildir."]
-    return subject, "\n".join(lines)
+    return "\n".join(lines)
 
 
-def send_email(subject: str, body: str) -> None:
+# Matches frontend/style.css's dark theme so the email feels like the same product.
+BG, CARD, CARD_HEAD, BORDER = "#0b0f14", "#131920", "#1b232d", "#232c37"
+TEXT, MUTED, UP, DOWN = "#e8edf2", "#8a97a6", "#2ecc71", "#e74c3c"
+
+
+def _row(label: str, value_html: str) -> str:
+    return (
+        f'<tr><td style="padding:9px 16px;font-size:13px;color:{MUTED};border-top:1px solid {BORDER};">{label}</td>'
+        f'<td style="padding:9px 16px;font-size:13px;text-align:right;border-top:1px solid {BORDER};">{value_html}</td></tr>'
+    )
+
+
+def _card(title: str, rows: list[str]) -> str:
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="background:{CARD};border-radius:10px;overflow:hidden;margin:0 0 14px;border:1px solid {BORDER};">'
+        f'<tr><td colspan="2" style="padding:10px 16px;background:{CARD_HEAD};'
+        f'font-size:12px;font-weight:700;letter-spacing:.04em;color:{TEXT};">{title}</td></tr>'
+        f'{"".join(rows)}</table>'
+    )
+
+
+def _pct_span(pct: float) -> str:
+    color = UP if pct >= 0 else DOWN
+    return f'<span style="color:{color};font-weight:600;">{pct:+.2f}%</span>'
+
+
+def render_html(report: dict) -> str:
+    pred_rows = []
+    if report["resolved"] > 0:
+        acc_pct = report["correct"] / report["resolved"] * 100
+        acc_color = UP if acc_pct >= 50 else DOWN
+        pred_rows.append(_row("Yapılan / Sonuçlanan", f"{report['total_predictions']} / {report['resolved']}"))
+        pred_rows.append(_row(
+            "İsabet oranı",
+            f'<span style="color:{acc_color};font-weight:600;">%{acc_pct:.1f}</span> '
+            f'<span style="color:{MUTED};">({report["correct"]}/{report["resolved"]})</span>',
+        ))
+    else:
+        pred_rows.append(_row("Yapılan", f"{report['total_predictions']} (henüz sonuçlanan yok)"))
+
+    comp_bits, best_name, best_acc = [], None, -1.0
+    for c in ensemble.COMPONENTS:
+        acc, count = report["components"][c]
+        label = COMPONENT_LABELS[c]
+        if acc is None:
+            comp_bits.append(f'{label} <span style="color:{MUTED};">— veri yok</span>')
+        else:
+            comp_bits.append(f"{label} %{acc * 100:.1f} <span style=\"color:{MUTED};\">({count})</span>")
+            if count >= MIN_SAMPLES_FOR_BEST and acc > best_acc:
+                best_name, best_acc = label, acc
+    if best_name is not None:
+        pred_rows.append(_row("En başarılı bileşen", f'<span style="color:{UP};font-weight:600;">{best_name} (%{best_acc * 100:.1f})</span>'))
+    pred_rows.append(_row("Bileşenler", " · ".join(comp_bits)))
+
+    ret_pct = (report["value_now"] - report["value_start"]) / report["value_start"] * 100 if report["value_start"] else 0.0
+    portfolio_rows = [
+        _row("Bakiye", f"${report['value_start']:.2f} &rarr; ${report['value_now']:.2f} {_pct_span(ret_pct)}"),
+        _row("Şu an elde", f"{report['xrp_now']:.2f} XRP <span style=\"color:{MUTED};\">({report['position']})</span>"),
+        _row("Bugünkü işlemler", f"{report['trade_total']} <span style=\"color:{MUTED};\">({report['buys']} AL, {report['sells']} SAT)</span>"),
+    ]
+
+    if report["price_start"] is not None:
+        price_pct = (report["price_now"] - report["price_start"]) / report["price_start"] * 100
+        price_rows = [
+            _row("Dün 18:00", f"${report['price_start']:.4f}"),
+            _row("Bugün 18:00", f"${report['price_now']:.4f} {_pct_span(price_pct)}"),
+        ]
+    else:
+        price_rows = [_row("Güncel", f"${report['price_now']:.4f} <span style=\"color:{MUTED};\">(önceki veri yok)</span>")]
+
+    w = report["weights"]
+    weight_rows = [_row(
+        "Dağılım",
+        f"Teknik %{w['technical'] * 100:.1f} · ML %{w['ml'] * 100:.1f} · "
+        f"Balina %{w['whale'] * 100:.1f} · Haber %{w['news'] * 100:.1f}",
+    )]
+
+    body = (
+        _card("📊 TAHMİNLER", pred_rows)
+        + _card("💰 SANAL PORTFÖY", portfolio_rows)
+        + _card("💹 XRP/USDT FİYATI", price_rows)
+        + _card("⚖️ ENSEMBLE AĞIRLIKLARI", weight_rows)
+    )
+
+    return f"""\
+<!doctype html>
+<html><body style="margin:0;padding:0;background:{BG};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{BG};padding:24px 0;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0"
+       style="width:600px;max-width:100%;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:{TEXT};">
+<tr><td style="padding:0 20px 6px;">
+  <div style="font-size:20px;font-weight:700;">XRP Tahmin Paneli</div>
+  <div style="font-size:13px;color:{MUTED};margin-top:2px;">Günlük Özet &mdash; {format_tr_date(report['end'])}</div>
+</td></tr>
+<tr><td style="padding:14px 20px 4px;font-size:14px;">Merhaba Erdem,</td></tr>
+<tr><td style="padding:0 20px 16px;font-size:13px;color:{MUTED};">
+  Dün {report['start'].strftime('%H:%M')} &ndash; bugün {report['end'].strftime('%H:%M')} arasında:
+</td></tr>
+<tr><td style="padding:0 20px;">{body}</td></tr>
+<tr><td style="padding:4px 20px 0;font-size:11px;color:{MUTED};">Bu bir yatırım tavsiyesi değildir.</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>
+"""
+
+
+def render_email(report: dict) -> tuple[str, str, str]:
+    subject = f"XRP Tahmin Paneli - Günlük Özet ({format_tr_date(report['end'])})"
+    return subject, render_text(report), render_html(report)
+
+
+def send_email(subject: str, text_body: str, html_body: str) -> None:
     address = os.environ["GMAIL_ADDRESS"]
     app_password = os.environ["GMAIL_APP_PASSWORD"]
     recipient = os.environ.get("REPORT_RECIPIENT", address)
 
-    msg = MIMEText(body, "plain", "utf-8")
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = address
     msg["To"] = recipient
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
@@ -219,9 +334,9 @@ def send_email(subject: str, body: str) -> None:
 def main() -> int:
     db = get_client()
     report = build_report(db)
-    subject, body = render_email(report)
-    print(body)
-    send_email(subject, body)
+    subject, text_body, html_body = render_email(report)
+    print(text_body)
+    send_email(subject, text_body, html_body)
     print("Daily report email sent.")
     return 0
 
