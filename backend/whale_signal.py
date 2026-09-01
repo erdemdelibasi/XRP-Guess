@@ -26,6 +26,7 @@ EXCHANGE_NAME_HINTS = [
 LARGE_TX_THRESHOLD_XRP = 100_000  # a commonly used on-chain "whale" cutoff
 LOOKBACK_MINUTES = 120
 MAX_TRACKED_ACCOUNTS = 8  # cap outbound requests per run
+MAX_PAGES_PER_ACCOUNT = 6  # XRPSCAN pages at 25 tx each; busy hot wallets need several pages to cover LOOKBACK_MINUTES
 FULL_CONFIDENCE_NET_USD = 2_000_000  # net flow magnitude that maps to confidence 1.0
 
 NEUTRAL = {"direction": "UP", "confidence": 0.0, "score": 0.0}
@@ -73,39 +74,58 @@ def _xrp_amount(amount) -> float | None:
 
 def _net_flow_for_account(account: str, since: datetime) -> float:
     """Net XRP flow INTO `account` (positive = inflow, negative = outflow)
-    from large native-XRP Payments since `since`. Only inspects the most
-    recent page of transactions -- for very high-volume wallets this may
-    miss older large transfers within the lookback window, which is an
-    accepted trade-off to keep this call cheap and resilient."""
-    try:
-        resp = requests.get(f"{XRPSCAN_BASE}/account/{account}/transactions", timeout=TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-    except (requests.RequestException, ValueError):
-        return 0.0
-
+    from large native-XRP Payments since `since`. Pages backwards (newest
+    first, via XRPSCAN's `marker`) until a transaction older than `since` is
+    seen or MAX_PAGES_PER_ACCOUNT is hit -- busy exchange wallets can produce
+    dozens of transactions within just a few minutes, so a single page (25
+    tx) is nowhere near enough to cover a multi-hour window on its own."""
     net = 0.0
-    for tx in data.get("transactions", []):
-        if tx.get("TransactionType") != "Payment" or not tx.get("validated"):
-            continue
-        tx_date = tx.get("date")
-        if not tx_date:
-            continue
+    marker = None
+
+    for _ in range(MAX_PAGES_PER_ACCOUNT):
+        params = {"marker": marker} if marker else None
         try:
-            when = datetime.fromisoformat(tx_date.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if when < since:
-            continue
+            resp = requests.get(f"{XRPSCAN_BASE}/account/{account}/transactions", params=params, timeout=TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+        except (requests.RequestException, ValueError):
+            break
 
-        xrp_amount = _xrp_amount(tx.get("Amount"))
-        if xrp_amount is None or xrp_amount < LARGE_TX_THRESHOLD_XRP:
-            continue
+        txs = data.get("transactions", [])
+        if not txs:
+            break
 
-        if tx.get("Destination") == account:
-            net += xrp_amount
-        elif tx.get("Account") == account:
-            net -= xrp_amount
+        reached_cutoff = False
+        for tx in txs:
+            if tx.get("TransactionType") != "Payment" or not tx.get("validated"):
+                continue
+            tx_date = tx.get("date")
+            if not tx_date:
+                continue
+            try:
+                when = datetime.fromisoformat(tx_date.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if when < since:
+                reached_cutoff = True
+                break
+
+            xrp_amount = _xrp_amount(tx.get("Amount"))
+            if xrp_amount is None or xrp_amount < LARGE_TX_THRESHOLD_XRP:
+                continue
+
+            if tx.get("Destination") == account:
+                net += xrp_amount
+            elif tx.get("Account") == account:
+                net -= xrp_amount
+
+        if reached_cutoff:
+            break
+
+        marker = data.get("marker")
+        if not marker:
+            break
+
     return net
 
 
