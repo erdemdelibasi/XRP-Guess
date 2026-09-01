@@ -7,6 +7,9 @@ produces four checkpoints -- :15, :30, :45, :00 -- each with its own expected
 percentage change and target price, from both methods.
 
 No Binance API key is used or required -- only public market data endpoints.
+
+Each run also feeds the final ensemble prediction into trading.py, which
+simulates a $1000 paper-trading portfolio (no real money, no real orders).
 """
 import sys
 from datetime import datetime, timedelta, timezone
@@ -22,6 +25,7 @@ from indicators import (
     technical_signal,
 )
 import ml_model
+import trading
 
 SYMBOL = "XRPUSDT"
 BTC_SYMBOL = "BTCUSDT"
@@ -117,7 +121,7 @@ def main() -> int:
 
     target_time = next_quarter_hour(now)
 
-    db.table("predictions").insert({
+    inserted = db.table("predictions").insert({
         "symbol": SYMBOL,
         "target_time": target_time.isoformat(),
         "price_at_prediction": current_price,
@@ -142,6 +146,9 @@ def main() -> int:
           f"{final['direction']} {final_pct * 100:+.2f}% -> {current_price * (1 + final_pct):.4f} "
           f"[tech={tech['direction']}/{tech_pct * 100:+.2f}%, ml={ml['direction']}/{ml_pct * 100:+.2f}%, "
           f"weights={weights}]")
+
+    prediction_id = inserted.data[0]["id"] if inserted.data else None
+    trading.maybe_trade(db, prediction_id, final["direction"], final["confidence"], current_price)
     return 0
 
 

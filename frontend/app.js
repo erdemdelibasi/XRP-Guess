@@ -2,6 +2,8 @@ const AUTH_KEY = "xrp_tahmin_auth_ok";
 let allPredictions = [];
 let pieChart = null;
 let currentRangeDays = 7;
+let portfolioState = null;
+let lastLivePrice = null;
 
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
@@ -38,14 +40,31 @@ function setupGate() {
   });
 }
 
+function supabaseHeaders() {
+  return {
+    apikey: CONFIG.SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+  };
+}
+
 async function fetchPredictions(limit = 1000) {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/predictions?select=*&order=created_at.desc&limit=${limit}`;
-  const res = await fetch(url, {
-    headers: {
-      apikey: CONFIG.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
-    },
-  });
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
+}
+
+async function fetchPortfolioState() {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/portfolio_state?select=*&id=eq.1`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  const rows = await res.json();
+  return rows[0] ?? null;
+}
+
+async function fetchTrades(limit = 50) {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/trades?select=*&order=created_at.desc&limit=${limit}`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
 }
@@ -159,6 +178,52 @@ function renderHistory(predictions) {
   });
 }
 
+const PORTFOLIO_START = 1000;
+
+function renderPortfolio(state, livePrice) {
+  if (!state || livePrice == null) return;
+  const cash = Number(state.cash_usd);
+  const xrp = Number(state.xrp_amount);
+  const value = cash + xrp * livePrice;
+  const returnPct = (value - PORTFOLIO_START) / PORTFOLIO_START;
+
+  document.getElementById("portfolio-value").textContent = `$${value.toFixed(2)}`;
+  const retEl = document.getElementById("portfolio-return");
+  retEl.textContent = `${returnPct >= 0 ? "+" : ""}${(returnPct * 100).toFixed(2)}%`;
+  retEl.className = `direction ${returnPct >= 0 ? "up" : "down"}`;
+
+  document.getElementById("portfolio-cash").textContent = `$${cash.toFixed(2)}`;
+  document.getElementById("portfolio-xrp").textContent = `${xrp.toFixed(4)} XRP`;
+}
+
+function renderTrades(trades) {
+  const tbody = document.querySelector("#trades-table tbody");
+  tbody.innerHTML = "";
+  if (trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted center">Henüz işlem yok</td></tr>';
+    return;
+  }
+  trades.forEach((t) => {
+    const tr = document.createElement("tr");
+    const sideClass = t.side === "BUY" ? "up" : "down";
+    const sideText = t.side === "BUY" ? "AL" : "SAT";
+
+    tr.innerHTML = `
+      <td>${fmtTime(t.created_at)}</td>
+      <td class="${sideClass}">
+        <div>${sideText}</div>
+        <div class="sub">${Number(t.xrp_amount).toFixed(2)} XRP @ ${fmtPrice(t.price)}</div>
+      </td>
+      <td>${fmtPrice(t.fee_usd)}</td>
+      <td>
+        <div>${fmtPrice(t.cash_after)}</div>
+        <div class="sub">${Number(t.xrp_after).toFixed(2)} XRP</div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
 function setupRangeButtons() {
   const container = document.getElementById("range-buttons");
   container.addEventListener("click", (e) => {
@@ -199,7 +264,9 @@ async function updateLivePrice() {
     const res = await fetch(BINANCE_TICKER_URL);
     if (!res.ok) throw new Error(`Binance fetch failed: ${res.status}`);
     const data = await res.json();
-    document.getElementById("live-price").textContent = fmtPrice(Number(data.price));
+    lastLivePrice = Number(data.price);
+    document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
+    if (portfolioState) safeRender(renderPortfolio, portfolioState, lastLivePrice);
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -230,6 +297,22 @@ async function loadPredictions() {
   safeRender(renderCurrent, allPredictions[0]);
   safeRender(renderAccuracy, allPredictions);
   safeRender(renderHistory, allPredictions);
+
+  try {
+    portfolioState = await fetchPortfolioState();
+    if (portfolioState && lastLivePrice != null) {
+      safeRender(renderPortfolio, portfolioState, lastLivePrice);
+    }
+  } catch (err) {
+    console.error("Portfolio fetch failed:", err);
+  }
+
+  try {
+    const trades = await fetchTrades();
+    safeRender(renderTrades, trades);
+  } catch (err) {
+    console.error("Trades fetch failed:", err);
+  }
 }
 
 // Predictions only change every 15 min, so refreshing every 30s keeps the

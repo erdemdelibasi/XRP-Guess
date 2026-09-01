@@ -48,14 +48,52 @@ insert into model_state (component, weight) values
   ('ml', 0.5)
 on conflict (component) do nothing;
 
+-- Virtual $1000 paper-trading portfolio: simulates automatically buying/
+-- selling XRP based on the ensemble prediction's direction, no real money or
+-- Binance account involved.
+create table if not exists portfolio_state (
+  id                     int primary key default 1,
+  cash_usd               numeric not null default 1000,
+  xrp_amount             numeric not null default 0,
+  position               text not null default 'CASH' check (position in ('CASH', 'LONG')),
+  updated_at             timestamptz not null default now(),
+  check (id = 1)
+);
+
+insert into portfolio_state (id) values (1) on conflict (id) do nothing;
+
+create table if not exists trades (
+  id                          bigint generated always as identity primary key,
+  created_at                  timestamptz not null default now(),
+  side                        text not null check (side in ('BUY', 'SELL')),
+  price                       numeric not null,
+  xrp_amount                  numeric not null,
+  usd_amount                  numeric not null,
+  fee_usd                     numeric not null,
+  cash_after                  numeric not null,
+  xrp_after                   numeric not null,
+  triggered_by_prediction_id  bigint references predictions(id),
+  reason                      text
+);
+
+create index if not exists trades_created_at_idx on trades (created_at desc);
+
 -- Row Level Security: the frontend uses the public "anon" key and must only
 -- ever be able to read data. All writes come from the backend, which uses the
 -- service_role key (bypasses RLS) via GitHub Actions secrets.
 alter table predictions enable row level security;
 alter table model_state enable row level security;
+alter table portfolio_state enable row level security;
+alter table trades enable row level security;
 
 create policy "public read predictions" on predictions
   for select using (true);
 
 create policy "public read model_state" on model_state
+  for select using (true);
+
+create policy "public read portfolio_state" on portfolio_state
+  for select using (true);
+
+create policy "public read trades" on trades
   for select using (true);

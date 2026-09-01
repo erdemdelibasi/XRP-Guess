@@ -6,7 +6,10 @@ yüzde değişim ve hedef fiyat tahmini üreten, tahminleri loglayan ve başarı
 oranını gösteren bir panel. iPhone'da "Ana Ekrana Ekle" ile app gibi çalışır.
 
 **Bu bir yatırım tavsiyesi aracı değildir.** Binance hesabına hiç bağlanmaz,
-API anahtarı istemez, otomatik alım-satım yapmaz — sadece izleme/tahmin amaçlıdır.
+API anahtarı istemez, gerçek para veya gerçek emirle hiçbir şekilde
+ilişkilendirilmez. Sistem kendi tahminlerini test etmek için $1000'lık
+**sanal** bir portföyle otomatik alım-satım simülasyonu yapar (bkz. aşağı) —
+bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
 
 ## Kurulum (tek seferlik)
 
@@ -76,9 +79,16 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   yeniden eğitilir ve teknik/ML bileşenlerinin son 14 günlük başarı oranına
   göre birleştirme ağırlıkları güncellenir — sistemin kendini zamanla
   ayarlaması bu şekilde olur.
+- Aynı çalışma, nihai (ensemble) tahmin yön değiştirdiğinde ve güven eşiğini
+  geçtiğinde `trading.py` üzerinden **sanal** bir alım/satım da tetikler:
+  Artış'a dönünce elde nakit varsa tüm nakitle XRP alınır, Azalış'a dönünce
+  elde XRP varsa tamamı satılır (Binance'ın standart %0.10'luk spot işlem
+  komisyonu her işlemde düşülür). Aynı yönde kaldığı sürece işlem yapılmaz —
+  yoksa komisyonlar her 15 dakikada bir portföyü eritirdi. Gerçek para veya
+  Binance hesabı kesinlikle karışmaz.
 - Panelde: güncel tahmin (hedef zaman, yüzde değişim, tahmini fiyat, teknik/ML
-  kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli) ve geçmiş
-  tahmin tablosu gösterilir.
+  kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli), sanal
+  portföyün canlı değeri ve işlem geçmişi, ve geçmiş tahmin tablosu gösterilir.
 
 ## Sınırlamalar
 - Kripto fiyat tahmini doğası gereği belirsizdir; "kanıtlanmış" garanti bir

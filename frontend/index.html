@@ -82,6 +82,37 @@
     </section>
 
     <section class="card">
+      <h2>Sanal Portföy <span class="muted small">($1000 başlangıç)</span></h2>
+      <div class="price-row">
+        <span id="portfolio-value" class="price">-</span>
+        <span id="portfolio-return" class="direction">-</span>
+      </div>
+      <div class="components-row muted">
+        <span>Nakit: <span id="portfolio-cash">-</span></span>
+        <span>XRP: <span id="portfolio-xrp">-</span></span>
+      </div>
+      <p class="muted small">Gerçek para değil, Binance hesabına bağlı değil — nihai
+        tahmin yön değiştirdiğinde otomatik al/sat yapan bir simülasyon (%0.10 komisyon dahil).</p>
+    </section>
+
+    <section class="card">
+      <h2>İşlem Geçmişi</h2>
+      <div class="table-wrap">
+        <table id="trades-table">
+          <thead>
+            <tr>
+              <th>Zaman</th>
+              <th>İşlem</th>
+              <th>Komisyon</th>
+              <th>Bakiye</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>Geçmiş Tahminler</h2>
       <div class="table-wrap">
         <table id="history-table">
