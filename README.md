@@ -40,12 +40,29 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
 
    Balina sinyali (XRPSCAN) ve haber sinyali (Google News RSS) için ayrıca
    bir anahtar gerekmez, ikisi de tamamen ücretsiz ve herkese açık.
+
+   Günlük özet e-postası istiyorsan (bkz. aşağıda "Nasıl çalışıyor") şu
+   üçünü de ekle:
+   - `GMAIL_ADDRESS` — e-postanın gönderileceği Gmail adresin
+     (ör. `erdemdelibasi@gmail.com`)
+   - `GMAIL_APP_PASSWORD` — normal Gmail şifren **değil**: önce
+     https://myaccount.google.com/security adresinden **2 Adımlı
+     Doğrulama**'yı aç (kapalıysa), sonra
+     https://myaccount.google.com/apppasswords adresinden yeni bir
+     "Uygulama Şifresi" oluştur (16 haneli, boşluksuz gir)
+   - `REPORT_RECIPIENT` — maili alacak adres (genelde `GMAIL_ADDRESS` ile
+     aynı, kendine gönderir)
+
+   Bunları eklemezsen sadece `Daily Email Report` workflow'u başarısız olur
+   (Actions sekmesinde kırmızı görünür); tahmin/al-sat sistemini etkilemez.
 3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
    üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
    çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak
    "bootstrap" eğitimi yapılır (geçmiş 15 dakikalık mumlarla, biraz sürebilir).
 4. `Daily Model Retrain` workflow'unu da bir kez manuel çalıştır — bu, eğitilen
    modeli `backend/models/xrp_model.joblib` olarak repoya geri commit eder.
+5. `Daily Email Report` workflow'unu manuel çalıştırıp (Gmail secret'larını
+   ekledikten sonra) günlük özet mailinin gerçekten geldiğini doğrula.
 
 ### 3. Parolayı belirle
 Tarayıcı konsolunda (herhangi bir sekmede F12 → Console) şunu çalıştırıp
@@ -125,6 +142,13 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 - Panelde: güncel tahmin (hedef zaman, yüzde değişim, tahmini fiyat, teknik/ML
   kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli), sanal
   portföyün canlı değeri ve işlem geçmişi, ve geçmiş tahmin tablosu gösterilir.
+- Her gün saat 18:10'da (Türkiye saati, `daily_report.yml`) son 24 saatin
+  (dün 18:00 - bugün 18:00) özeti e-posta ile gönderilir: kaç tahmin
+  yapıldı/sonuçlandı/doğru çıktı, hangi bileşen (teknik/ML/balina/haber) o
+  gün en isabetliydi, sanal portföyün bakiyesi ve XRP fiyatı dünden bugüne
+  nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
+  `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
+  hesaplanır — ayrı bir "günlük anlık görüntü" tablosu tutulmaz.
 
 ## Sınırlamalar
 - Kripto fiyat tahmini doğası gereği belirsizdir; "kanıtlanmış" garanti bir

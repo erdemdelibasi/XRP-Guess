@@ -8,8 +8,9 @@ Portföy özelliği tamamen sanal/kağıt üzerindedir ($1000 simülasyon).
 
 ```
 GitHub Actions (cron, sunucusuz zamanlayıcı)
-  -> backend/predict.py     her 15 dk (:01/:16/:31/:46) çalışır
-  -> backend/retrain.py     her gün 03:30 UTC çalışır
+  -> backend/predict.py       her 15 dk (:01/:16/:31/:46) çalışır
+  -> backend/retrain.py       her gün 03:30 UTC çalışır
+  -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC) çalışır, Gmail SMTP ile mail atar
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -55,6 +56,13 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `ensemble.COMPONENTS`'e ekleyip `predictions` tablosuna aynı 5-kolonluk
   örüntüyü (`{c}_direction/confidence/pct_change/price/correct` +
   `weight_{c}`) uygulaman yeterli.
+
+- `daily_report.py` yeni bir tablo kullanmaz — dünkü 18:00'deki portföy
+  durumunu `trades` tablosunu geriye doğru "replay" ederek (o zamandan
+  önceki/o ana en yakın işlemin `cash_after`/`xrp_after`'i), dünkü XRP
+  fiyatını da `predictions` tablosundaki en yakın çözülmüş tahminin
+  `price_at_resolution`'ından yeniden inşa eder. Gmail App Password ile
+  `smtplib` üzerinden gönderir (ek pip bağımlılığı yok).
 
 ## Geliştirme notları
 
