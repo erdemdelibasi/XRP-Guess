@@ -136,9 +136,10 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   fiyat vaadi değildir.
 - Parola koruması client-side'dır, gelişmiş bir saldırgana karşı güvenlik
   sağlamaz; sadece rastgele erişimi engeller.
-- Balina sinyali, izlenen her borsa cüzdanı için sadece en güncel işlem
-  sayfasını kontrol eder; çok yoğun işlem gören cüzdanlarda pencere içindeki
-  bazı büyük transferler bu şekilde kaçabilir. CryptoPanic'in ücretsiz
+- Balina sinyali, izlenen her borsa cüzdanı için XRPSCAN'da en fazla 6 sayfa
+  (150 işlem) geriye gider; olağanüstü yoğun bir cüzdanda bu bile 120
+  dakikalık pencerenin tamamını kapsamayabilir (yerel testte gerçek veriyle
+  doğrulandı — bkz. commit geçmişi). CryptoPanic'in ücretsiz
   katmanı da hız sınırlıdır — rate limit'e takılınca haber sinyali o
   çalışmada sessiz kalır, sistem çökmez.
 - "Borsaya giriş=düşüş, çıkış=yükseliş" ve haber-oy sentiment'i, akademik
