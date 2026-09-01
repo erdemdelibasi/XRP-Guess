@@ -8,6 +8,7 @@ Fails soft to a neutral signal on any network/data problem -- a hiccup here
 must never block a prediction run.
 """
 from datetime import datetime, timedelta, timezone
+from itertools import zip_longest
 
 import requests
 
@@ -33,9 +34,21 @@ NEUTRAL = {"direction": "UP", "confidence": 0.0, "score": 0.0}
 
 
 def get_exchange_accounts() -> list[str]:
-    """Fetches XRPSCAN's public well-known-accounts list and returns the
-    addresses whose label looks like a major exchange. Empty list on any
-    failure (caller treats that as "no data available")."""
+    """Fetches XRPSCAN's public well-known-accounts list and returns up to
+    MAX_TRACKED_ACCOUNTS addresses tagged as major exchanges, round-robined
+    across exchanges rather than taking the first N matches overall.
+
+    The well-known list isn't sorted by wallet importance, and exchanges are
+    wildly unevenly represented in it (Coinbase has 552 tagged accounts --
+    almost certainly per-customer deposit addresses, not operational hot
+    wallets -- versus OKX's 1 and Bitfinex's 2). Taking "the first N matches"
+    ended up tracking 8 Binance addresses and nothing else -- confirmed live:
+    7 of those 8 had zero transactions in a 2-hour window, and net flow was
+    driven entirely by one wallet, making the signal a read on that single
+    wallet's behavior rather than the market. Round-robining one account per
+    exchange spreads the (still small) sample across exchanges instead.
+
+    Empty list on any failure (caller treats that as "no data available")."""
     try:
         resp = requests.get(WELL_KNOWN_URL, timeout=TIMEOUT)
         resp.raise_for_status()
@@ -43,13 +56,26 @@ def get_exchange_accounts() -> list[str]:
     except (requests.RequestException, ValueError):
         return []
 
-    accounts = []
+    by_exchange: dict[str, list[str]] = {}
     for entry in entries:
         name = (entry.get("name") or "").lower()
         account = entry.get("account")
-        if account and any(hint in name for hint in EXCHANGE_NAME_HINTS):
+        if not account:
+            continue
+        for hint in EXCHANGE_NAME_HINTS:
+            if hint in name:
+                by_exchange.setdefault(hint, []).append(account)
+                break
+
+    accounts = []
+    for round_accounts in zip_longest(*by_exchange.values()):
+        for account in round_accounts:
+            if account is None:
+                continue
             accounts.append(account)
-    return accounts[:MAX_TRACKED_ACCOUNTS]
+            if len(accounts) >= MAX_TRACKED_ACCOUNTS:
+                return accounts
+    return accounts
 
 
 def _xrp_amount(amount) -> float | None:

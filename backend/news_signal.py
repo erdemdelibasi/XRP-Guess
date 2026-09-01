@@ -12,6 +12,7 @@ it once it has built up enough resolved history of its own.
 Fails soft to a neutral signal on any network/parsing problem -- a hiccup
 here must never block a prediction run.
 """
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -25,17 +26,42 @@ LOOKBACK_HOURS = 6
 FULL_CONFIDENCE_HIT_COUNT = 6  # net keyword-weighted headline score mapping to confidence 1.0
 
 POSITIVE_KEYWORDS = [
-    "approve", "approval", "win", "wins", "victory", "dismiss", "favor",
-    "partnership", "adopt", "adoption", "launch", "surge", "rally", "bullish",
+    "approve", "approves", "approval", "win", "wins", "victory", "dismiss",
+    "dismisses", "favor", "partnership", "adopt", "adopts", "adoption",
+    "launch", "launches", "launched", "surge", "surges", "rally", "rallies",
+    "bullish",
 ]
 NEGATIVE_KEYWORDS = [
-    "sue", "sues", "sued", "lawsuit", "fine", "fined", "ban", "reject",
-    "delay", "delayed", "crash", "sell-off", "bearish", "hack", "hacked", "fraud",
+    "sue", "sues", "sued", "lawsuit", "fine", "fines", "fined", "ban",
+    "bans", "banned", "reject", "rejects", "rejected", "delay", "delays",
+    "delayed", "crash", "crashes", "sell-off", "bearish", "hack", "hacks",
+    "hacked", "fraud",
 ]
 REGULATORY_KEYWORDS = [
     "sec", "lawsuit", "court", "ruling", "regulation", "regulatory",
-    "approve", "approval", "etf", "settlement", "appeal",
+    "approve", "approves", "approval", "etf", "etfs", "settlement", "appeal",
 ]
+
+# Naive substring matching (the previous approach) false-positives constantly --
+# "ban" inside "banking"/"bank", "sec" inside "second"/"sector", "sue" inside
+# "issue"/"pursue", "hack" inside "hackathon". Confirmed live: a neutral/bullish
+# headline ("This banking giant emerges as top XRP ETF holder") was scored as
+# strongly bearish purely because "ban" matched inside "banking". Word-boundary
+# matching fixes that, at the cost of needing each inflected form (surges,
+# launches, etfs, ...) listed explicitly above instead of falling out "for free."
+_WORD_BOUNDARY_CACHE: dict[str, re.Pattern] = {}
+
+
+def _keyword_hits(title: str, keywords: list[str]) -> list[str]:
+    hits = []
+    for kw in keywords:
+        pattern = _WORD_BOUNDARY_CACHE.get(kw)
+        if pattern is None:
+            pattern = re.compile(rf"\b{re.escape(kw)}\b")
+            _WORD_BOUNDARY_CACHE[kw] = pattern
+        if pattern.search(title):
+            hits.append(kw)
+    return hits
 
 NEUTRAL = {"direction": "UP", "confidence": 0.0, "score": 0.0}
 
@@ -74,12 +100,12 @@ def news_signal() -> dict:
             continue
 
         title = item["title"].lower()
-        pos_hits = sum(1 for kw in POSITIVE_KEYWORDS if kw in title)
-        neg_hits = sum(1 for kw in NEGATIVE_KEYWORDS if kw in title)
+        pos_hits = len(_keyword_hits(title, POSITIVE_KEYWORDS))
+        neg_hits = len(_keyword_hits(title, NEGATIVE_KEYWORDS))
         if pos_hits == 0 and neg_hits == 0:
             continue
 
-        weight = 2.0 if any(kw in title for kw in REGULATORY_KEYWORDS) else 1.0
+        weight = 2.0 if _keyword_hits(title, REGULATORY_KEYWORDS) else 1.0
         net_score += (pos_hits - neg_hits) * weight
 
     if net_score == 0:
