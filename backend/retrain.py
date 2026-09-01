@@ -2,22 +2,32 @@
 
 1. Retrains the ML model on the latest ~4000 15-min candles (~41 days) from
    Binance.
-2. Recomputes each ensemble component's rolling accuracy from the prediction
+2. Refits the technical/ml confidence calibration (see calibration.py) on a
+   held-out walk-forward replay of that same history.
+3. Recomputes each ensemble component's rolling accuracy from the prediction
    log and updates the ensemble weights (the "self-improvement" loop).
 """
 import sys
 from datetime import datetime, timedelta, timezone
 
+import calibration
 from db import get_client
 import ensemble
 from fetch_data import get_klines_history
+from indicators import add_cross_asset_correlation, add_indicator_columns, technical_signal
 import ml_model
 
 SYMBOL = "XRPUSDT"
+BTC_SYMBOL = "BTCUSDT"
+ETH_SYMBOL = "ETHUSDT"
 INTERVAL = "15m"
 TRAINING_CANDLES = 4000  # ~41 days of 15-min candles
 ROLLING_WINDOW_DAYS = 14
 MIN_RESOLVED_FOR_REWEIGHT = 20
+
+CALIBRATION_TRAIN_FRACTION = 0.7  # mirrors backtest.py's split
+CALIBRATION_WARMUP_CANDLES = 50 * 4
+CALIBRATION_FEATURE_LIMIT = 400
 
 
 def _accuracy(values: list[bool]) -> float | None:
@@ -83,6 +93,63 @@ def upsert_weight(db, component: str, weight: float, accuracy: float | None) -> 
     }).execute()
 
 
+def _trailing_window(df, end_idx: int, limit: int = CALIBRATION_FEATURE_LIMIT):
+    start_idx = max(0, end_idx - limit + 1)
+    return df.iloc[start_idx:end_idx + 1]
+
+
+def fit_calibration(xrp_raw, btc_raw, eth_raw) -> dict:
+    """Walk-forward replays technical+ML on a held-out tail of recent history
+    (same method as backtest.py) to collect (confidence, was_correct) pairs
+    per component, then fits an isotonic calibrator per component. Refit
+    daily, alongside the model and ensemble weights, so calibration tracks
+    the model's current behavior instead of going stale. Uses its own
+    train/test split and a throwaway ML model -- separate from the
+    production model trained on the full history above -- purely to get an
+    out-of-sample replay to calibrate against."""
+    n = min(len(xrp_raw), len(btc_raw), len(eth_raw))
+    xrp_raw = xrp_raw.iloc[:n].reset_index(drop=True)
+    btc_raw = btc_raw.iloc[:n].reset_index(drop=True)
+    eth_raw = eth_raw.iloc[:n].reset_index(drop=True)
+
+    split = int(n * CALIBRATION_TRAIN_FRACTION)
+    calib_model, _ = ml_model.train_model(xrp_raw.iloc[:split])
+
+    test_start = split + CALIBRATION_WARMUP_CANDLES
+    if test_start >= n - 1:
+        print("Not enough history for a calibration refit -- skipping.")
+        return {}
+
+    records: dict[str, list[tuple[float, bool]]] = {"technical": [], "ml": []}
+    for i in range(test_start, n - 1):
+        xrp_window = _trailing_window(xrp_raw, i)
+        btc_window = _trailing_window(btc_raw, i)
+        eth_window = _trailing_window(eth_raw, i)
+
+        feat = add_indicator_columns(xrp_window)
+        feat = add_cross_asset_correlation(feat, btc_window, "btc")
+        feat = add_cross_asset_correlation(feat, eth_window, "eth")
+
+        tech = technical_signal(feat)
+        ml_sig = ml_model.ml_signal(calib_model, feat)
+
+        price = float(xrp_window["close"].iloc[-1])
+        next_price = float(xrp_raw["close"].iloc[i + 1])
+        actual_direction = "UP" if next_price > price else "DOWN"
+
+        records["technical"].append((tech["confidence"], actual_direction == tech["direction"]))
+        records["ml"].append((ml_sig["confidence"], actual_direction == ml_sig["direction"]))
+
+    calibrators = {}
+    for component, pairs in records.items():
+        confidences = [c for c, _ in pairs]
+        corrects = [ok for _, ok in pairs]
+        fitted = calibration.fit(confidences, corrects)
+        if fitted is not None:
+            calibrators[component] = fitted
+    return calibrators
+
+
 def main() -> int:
     db = get_client()
 
@@ -91,6 +158,20 @@ def main() -> int:
     model, metrics = ml_model.train_model(history)
     ml_model.save_model(model)
     print(f"Retrain complete: {metrics}")
+
+    print("Refitting confidence calibration...")
+    btc_history = get_klines_history(BTC_SYMBOL, interval=INTERVAL, total=TRAINING_CANDLES)
+    eth_history = get_klines_history(ETH_SYMBOL, interval=INTERVAL, total=TRAINING_CANDLES)
+    calibrators = fit_calibration(history, btc_history, eth_history)
+    if calibrators:
+        # Merge onto the existing saved calibrators rather than replacing
+        # wholesale -- a component that doesn't have enough well-populated
+        # bins today (fit() returns nothing for it) should keep yesterday's
+        # calibration instead of silently reverting to "uncalibrated."
+        merged = calibration.load()
+        merged.update(calibrators)
+        calibration.save(merged)
+        print(f"Calibration refit complete for: {list(calibrators)}")
 
     accuracies = rolling_accuracies(db)
     new_weights = ensemble.recompute_weights(accuracies)

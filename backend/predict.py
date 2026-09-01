@@ -17,6 +17,7 @@ simulates a $1000 paper-trading portfolio (no real money, no real orders).
 import sys
 from datetime import datetime, timedelta, timezone
 
+import calibration
 from db import get_client
 import ensemble
 from fetch_data import get_current_price, get_klines, get_klines_history
@@ -140,6 +141,11 @@ def main() -> int:
         print(f"Bootstrap training complete: {metrics}")
 
     ml = ml_model.ml_signal(model, xrp)
+
+    calibrators = calibration.load()
+    tech = calibration.apply(calibrators.get("technical"), tech)
+    ml = calibration.apply(calibrators.get("ml"), ml)
+
     whale = safe_signal(whale_signal_module.whale_signal, current_price, label="whale")
     news = safe_signal(news_signal_module.news_signal, label="news")
     orderbook = safe_signal(orderbook_signal_module.orderbook_signal, label="orderbook")

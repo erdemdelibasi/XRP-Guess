@@ -36,8 +36,15 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
 - **Gerçek para/emir yok.** `backend/trading.py` tamamen simülasyon;
   `portfolio_state`/`trades` tabloları sanal. Pozisyon büyüklüğü
   güven-bazlı (`_target_allocation`, ikili CASH/LONG değil), stop-loss'u
-  var (`STOP_LOSS_DRAWDOWN`, `peak_value` hiç geri düşmez). Karar mantığı
-  `compute_rebalance()` içinde DB'siz saf bir fonksiyon olarak yaşıyor —
+  var (`STOP_LOSS_DRAWDOWN`, `peak_value` hiç geri düşmez). Stop-loss
+  sonrası `STOP_LOSS_COOLDOWN_CANDLES` (~10 saat) kadar yeniden pozisyon
+  açılmaz — `peak_value` hiç düşmediği için, cooldown olmadan küçük bir
+  yeniden-giriş neredeyse her zaman bir sonraki mumda aynı stop-loss'u
+  tekrar tetikliyordu (60 günlük bir backtest'te 236 stop-loss'un 235'i
+  10 saat içinde tekrar stop-loss'a çarpıyordu, sermayenin ~%35'i sadece
+  komisyona gidiyordu — bkz. `portfolio_state.stop_loss_cooldown`). Karar
+  mantığı `compute_rebalance()` içinde DB'siz saf bir fonksiyon olarak
+  yaşıyor —
   hem `maybe_trade()` (canlı) hem `backend/backtest.py` (geçmiş replay)
   aynı fonksiyonu çağırır, mantık iki yerde tekrarlanmaz. Yeni bir eşik/
   parametre değiştirirsen `backtest.py`'ı çalıştırıp etkisini gerçekten
@@ -50,6 +57,14 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   (rastgeleden kötü) ve al-ve-tut'un çok altında getiri. Bunu "sistem
   bozuk" diye yorumlama ya da gizleme — bu backtest'in görevini yaptığının
   kanıtı; README'nin Sınırlamalar bölümünde kullanıcıya da aynen aktarıldı.
+  20.000 mumluk (~208 gün, ~5800 test adımı) daha büyük bir pencerede de
+  aynı sonuç doğrulandı: yön isabeti tam %50.0, Brier Skill Score negatif.
+  Rapor artık Brier score/log-loss ve güven aralığına göre bir kalibrasyon
+  tablosu (reliability diagram) da basıyor — küçük (~2000 adım altı)
+  pencerelerde bu tablo gürültülü/yanıltıcı çıkabiliyor (örn. "güven
+  arttıkça isabet düşüyor" gibi sahte bir ters-ilişki gördük, büyük
+  pencerede kayboldu), o yüzden kalibrasyonla ilgili bir sonucu asla tek
+  bir küçük backtest koşusuna dayandırma.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
 - Yön sinyali beş bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
@@ -82,6 +97,27 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   bootstrap-retrain yapar (bkz. `predict.py:main`) — bu kontrolü kaldırma,
   aksi halde canlı çalışma `ValueError` ile çöker.
 
+- **Güven kalibrasyonu** (`backend/calibration.py`): `technical` ve `ml`
+  bileşenlerinin ham `confidence`'ı gerçek isabetle örtüşmüyordu (bkz.
+  yukarıdaki backtest bulgusu) — `predict.py` artık bunları
+  `ensemble.combine()`'a vermeden önce isotonic regression ile kalibre
+  ediyor (yön asla değişmez, sadece güven/skor büyüklüğü düzeltilir).
+  Kalibratör `retrain.py` tarafından her gün, `compute_rebalance()`'a
+  benzer şekilde ayrı bir train/test replay'iyle yeniden fit edilip
+  `models/calibration.joblib`'e kaydedilir (mevcut kalibratörlerle
+  birleştirilir, bir bileşen o gün yeterli örnek bulamazsa öncekini
+  silmez). İlk fit'te ham isotonic, seyrek yüksek-güven kuyruğunda birkaç
+  örnekle "%100 isabet" gibi sahte sonuçlar üretti — bu yüzden `fit()`
+  ham örnekler yerine en az `MIN_BIN_COUNT` örnek içeren binlerin
+  ağırlıklı ortalaması üzerinde çalışır. `whale`/`news`/`orderbook`
+  kalibre edilmiyor (backtest edilemedikleri için fit edecek veri yok) —
+  `calibration.apply()` kalibratörü olmayan bir bileşen için no-op'tur.
+  **Beklenen sonuç önemli**: mevcut veriyle `ml`'in kalibre edilmiş güveni
+  neredeyse her zaman 0'a düşüyor (ham güveni gerçek isabetle hiç
+  örtüşmüyor) — yani `ml` fiilen abstain eder hale geldi, `technical` de
+  ciddi bastırılmış durumda. Bu "sistem bozuldu" değil, kalibrasyonun
+  yapması gereken şey; ama genel işlem sıklığının belirgin şekilde
+  düşmesini beklenmedik bir regresyon sanma.
 - `daily_report.py` yeni bir tablo kullanmaz — dünkü 18:00'deki portföy
   durumunu `trades` tablosunu geriye doğru "replay" ederek (o zamandan
   önceki/o ana en yakın işlemin `cash_after`/`xrp_after`'i), dünkü XRP
