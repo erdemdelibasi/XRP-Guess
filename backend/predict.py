@@ -1,10 +1,12 @@
 """Entry point run every 15 minutes by GitHub Actions.
 
 Each run predicts the price at the *next* quarter-hour clock mark (e.g. a run
-at 18:07 targets 18:15; a run at 18:16 targets 18:30) using both a rule-based
-technical signal and an ML model. Over the course of an hour this naturally
-produces four checkpoints -- :15, :30, :45, :00 -- each with its own expected
-percentage change and target price, from both methods.
+at 18:07 targets 18:15; a run at 18:16 targets 18:30) using four independent
+signal components -- a rule-based technical signal, an ML model, an on-chain
+XRPL whale/exchange-flow signal, and a news/regulatory sentiment signal --
+combined by ensemble.py. Over the course of an hour this naturally produces
+four checkpoints -- :15, :30, :45, :00 -- each with its own expected
+percentage change and target price, from every method.
 
 No Binance API key is used or required -- only public market data endpoints.
 
@@ -25,7 +27,9 @@ from indicators import (
     technical_signal,
 )
 import ml_model
+import news_signal as news_signal_module
 import trading
+import whale_signal as whale_signal_module
 
 SYMBOL = "XRPUSDT"
 BTC_SYMBOL = "BTCUSDT"
@@ -57,6 +61,8 @@ def resolve_due_predictions(db, current_price: float) -> None:
         correct = actual_direction == row["predicted_direction"]
         tech_correct = row.get("tech_direction") is not None and actual_direction == row["tech_direction"]
         ml_correct = row.get("ml_direction") is not None and actual_direction == row["ml_direction"]
+        whale_correct = row.get("whale_direction") is not None and actual_direction == row["whale_direction"]
+        news_correct = row.get("news_direction") is not None and actual_direction == row["news_direction"]
 
         db.table("predictions").update({
             "resolved_at": now_iso,
@@ -65,6 +71,8 @@ def resolve_due_predictions(db, current_price: float) -> None:
             "correct": correct,
             "tech_correct": tech_correct,
             "ml_correct": ml_correct,
+            "whale_correct": whale_correct,
+            "news_correct": news_correct,
         }).eq("id", row["id"]).execute()
         print(f"Resolved prediction {row['id']} (target {row['target_time']}): "
               f"predicted={row['predicted_direction']} actual={actual_direction} correct={correct}")
@@ -74,9 +82,20 @@ def get_ensemble_weights(db) -> dict:
     res = db.table("model_state").select("*").execute()
     weights = dict(ensemble.DEFAULT_WEIGHTS)
     for row in res.data:
-        if row["component"] in weights and row["weight"] is not None:
+        if row["component"] in ensemble.COMPONENTS and row["weight"] is not None:
             weights[row["component"]] = float(row["weight"])
     return weights
+
+
+def safe_signal(fn, *args, label: str) -> dict:
+    """Calls a signal-producing function and falls back to a neutral result
+    if it raises -- a hiccup in one evidence source must never block the
+    others or stop a prediction from being logged."""
+    try:
+        return fn(*args)
+    except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
+        print(f"WARNING: {label} signal failed ({exc}); using neutral fallback.")
+        return {"direction": "UP", "confidence": 0.0, "score": 0.0}
 
 
 def build_features(symbol: str):
@@ -110,13 +129,18 @@ def main() -> int:
         print(f"Bootstrap training complete: {metrics}")
 
     ml = ml_model.ml_signal(model, xrp)
+    whale = safe_signal(whale_signal_module.whale_signal, current_price, label="whale")
+    news = safe_signal(news_signal_module.news_signal, label="news")
 
     weights = get_ensemble_weights(db)
-    final = ensemble.combine(tech, ml, weights)
+    signals = {"technical": tech, "ml": ml, "whale": whale, "news": news}
+    final = ensemble.combine(signals, weights)
 
     volatility = recent_volatility(xrp)
     tech_pct = estimate_pct_change(tech["score"], volatility)
     ml_pct = estimate_pct_change(ml["score"], volatility)
+    whale_pct = estimate_pct_change(whale["score"], volatility)
+    news_pct = estimate_pct_change(news["score"], volatility)
     final_pct = estimate_pct_change(final["score"], volatility)
 
     target_time = next_quarter_hour(now)
@@ -137,14 +161,25 @@ def main() -> int:
         "ml_confidence": ml["confidence"],
         "ml_pct_change": ml_pct,
         "ml_price": current_price * (1 + ml_pct),
+        "whale_direction": whale["direction"],
+        "whale_confidence": whale["confidence"],
+        "whale_pct_change": whale_pct,
+        "whale_price": current_price * (1 + whale_pct),
+        "news_direction": news["direction"],
+        "news_confidence": news["confidence"],
+        "news_pct_change": news_pct,
+        "news_price": current_price * (1 + news_pct),
         "weight_technical": weights["technical"],
         "weight_ml": weights["ml"],
+        "weight_whale": weights["whale"],
+        "weight_news": weights["news"],
         "model_version": model_version,
     }).execute()
 
     print(f"New prediction for {target_time.isoformat()} @ {current_price} {SYMBOL}: "
           f"{final['direction']} {final_pct * 100:+.2f}% -> {current_price * (1 + final_pct):.4f} "
           f"[tech={tech['direction']}/{tech_pct * 100:+.2f}%, ml={ml['direction']}/{ml_pct * 100:+.2f}%, "
+          f"whale={whale['direction']}/{whale['confidence']:.2f}, news={news['direction']}/{news['confidence']:.2f}, "
           f"weights={weights}]")
 
     prediction_id = inserted.data[0]["id"] if inserted.data else None

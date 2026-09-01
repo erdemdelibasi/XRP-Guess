@@ -29,13 +29,18 @@ def _accuracy(values: list[bool]) -> float | None:
 PAGE_SIZE = 1000  # PostgREST caps a single response at ~1000 rows by default
 
 
+SELECT_COLUMNS = ",".join(
+    f"{ensemble.COLUMN_PREFIX[c]}_correct,{ensemble.COLUMN_PREFIX[c]}_confidence" for c in ensemble.COMPONENTS
+)
+
+
 def _fetch_all_since(db, since: str) -> list[dict]:
     rows = []
     start = 0
     while True:
         page = (
             db.table("predictions")
-            .select("tech_correct,ml_correct")
+            .select(SELECT_COLUMNS)
             .gte("created_at", since)
             .range(start, start + PAGE_SIZE - 1)
             .execute()
@@ -47,16 +52,26 @@ def _fetch_all_since(db, since: str) -> list[dict]:
     return rows
 
 
-def rolling_accuracies(db) -> tuple[float | None, float | None]:
+def rolling_accuracies(db) -> dict[str, float | None]:
     """Fetches resolved predictions from the trailing window and computes each
     ensemble component's accuracy client-side (avoids relying on the exact
-    chaining semantics of the query builder's negation filter)."""
+    chaining semantics of the query builder's negation filter). A component's
+    row only counts if it actually had a non-zero-confidence opinion that
+    period -- whale/news mostly stay silent (confidence 0) when nothing
+    notable happened, and that abstention shouldn't be scored as a coin flip."""
     since = (datetime.now(timezone.utc) - timedelta(days=ROLLING_WINDOW_DAYS)).isoformat()
     all_rows = _fetch_all_since(db, since)
-    resolved = [row for row in all_rows if row["tech_correct"] is not None or row["ml_correct"] is not None]
-    tech_values = [row["tech_correct"] for row in resolved if row["tech_correct"] is not None]
-    ml_values = [row["ml_correct"] for row in resolved if row["ml_correct"] is not None]
-    return _accuracy(tech_values), _accuracy(ml_values)
+
+    accuracies: dict[str, float | None] = {}
+    for component in ensemble.COMPONENTS:
+        prefix = ensemble.COLUMN_PREFIX[component]
+        values = [
+            row[f"{prefix}_correct"]
+            for row in all_rows
+            if row[f"{prefix}_correct"] is not None and (row.get(f"{prefix}_confidence") or 0) > 0
+        ]
+        accuracies[component] = _accuracy(values)
+    return accuracies
 
 
 def upsert_weight(db, component: str, weight: float, accuracy: float | None) -> None:
@@ -77,14 +92,13 @@ def main() -> int:
     ml_model.save_model(model)
     print(f"Retrain complete: {metrics}")
 
-    tech_acc, ml_acc = rolling_accuracies(db)
-    new_weights = ensemble.recompute_weights(tech_acc, ml_acc)
+    accuracies = rolling_accuracies(db)
+    new_weights = ensemble.recompute_weights(accuracies)
 
-    upsert_weight(db, "technical", new_weights["technical"], tech_acc)
-    upsert_weight(db, "ml", new_weights["ml"], ml_acc)
+    for component in ensemble.COMPONENTS:
+        upsert_weight(db, component, new_weights[component], accuracies[component])
 
-    print(f"Updated ensemble weights: {new_weights} "
-          f"(technical_accuracy={tech_acc}, ml_accuracy={ml_acc})")
+    print(f"Updated ensemble weights: {new_weights} (accuracies={accuracies})")
     return 0
 
 

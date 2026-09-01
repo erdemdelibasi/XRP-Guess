@@ -20,8 +20,18 @@ create table if not exists predictions (
   ml_confidence         numeric,
   ml_pct_change         numeric,
   ml_price              numeric,
+  whale_direction       text,
+  whale_confidence      numeric,
+  whale_pct_change      numeric,
+  whale_price           numeric,
+  news_direction        text,
+  news_confidence       numeric,
+  news_pct_change       numeric,
+  news_price            numeric,
   weight_technical      numeric,
   weight_ml             numeric,
+  weight_whale          numeric,
+  weight_news           numeric,
   model_version         text,
 
   resolved_at           timestamptz,
@@ -29,7 +39,9 @@ create table if not exists predictions (
   actual_direction      text check (actual_direction in ('UP', 'DOWN')),
   correct               boolean,
   tech_correct          boolean,
-  ml_correct            boolean
+  ml_correct            boolean,
+  whale_correct         boolean,
+  news_correct          boolean
 );
 
 create index if not exists predictions_created_at_idx on predictions (created_at desc);
@@ -37,15 +49,17 @@ create index if not exists predictions_target_time_idx on predictions (target_ti
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
 
 create table if not exists model_state (
-  component        text primary key check (component in ('technical', 'ml')),
-  weight           numeric not null default 0.5,
+  component        text primary key check (component in ('technical', 'ml', 'whale', 'news')),
+  weight           numeric not null default 0.25,
   rolling_accuracy numeric,
   updated_at       timestamptz not null default now()
 );
 
 insert into model_state (component, weight) values
-  ('technical', 0.5),
-  ('ml', 0.5)
+  ('technical', 0.35),
+  ('ml', 0.35),
+  ('whale', 0.15),
+  ('news', 0.15)
 on conflict (component) do nothing;
 
 -- Virtual $1000 paper-trading portfolio: simulates automatically buying/

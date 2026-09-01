@@ -106,6 +106,16 @@ function renderCurrent(latest) {
     `${latest.tech_direction ?? "-"} ${fmtPct(latest.tech_pct_change)} → ${fmtPrice(latest.tech_price)}`;
   document.getElementById("ml-component").textContent =
     `${latest.ml_direction ?? "-"} ${fmtPct(latest.ml_pct_change)} → ${fmtPrice(latest.ml_price)}`;
+
+  const whaleConfident = latest.whale_confidence != null && latest.whale_confidence > 0;
+  document.getElementById("whale-component").textContent = whaleConfident
+    ? `${latest.whale_direction} ${fmtPct(latest.whale_pct_change)} → ${fmtPrice(latest.whale_price)}`
+    : "Sessiz (büyük hareket yok)";
+
+  const newsConfident = latest.news_confidence != null && latest.news_confidence > 0;
+  document.getElementById("news-component").textContent = newsConfident
+    ? `${latest.news_direction} ${fmtPct(latest.news_pct_change)} → ${fmtPrice(latest.news_price)}`
+    : "Sessiz (önemli haber yok)";
 }
 
 function filterByRange(predictions, days) {
@@ -146,9 +156,13 @@ function renderAccuracy(predictions) {
   const latest = predictions[0];
   const weights = document.getElementById("weights-summary");
   if (latest && latest.weight_technical != null) {
-    weights.textContent =
-      `Güncel ağırlıklar — Teknik: %${Math.round(latest.weight_technical * 100)}, ` +
-      `ML: %${Math.round(latest.weight_ml * 100)}`;
+    const parts = [
+      `Teknik: %${Math.round(latest.weight_technical * 100)}`,
+      `ML: %${Math.round(latest.weight_ml * 100)}`,
+    ];
+    if (latest.weight_whale != null) parts.push(`Balina: %${Math.round(latest.weight_whale * 100)}`);
+    if (latest.weight_news != null) parts.push(`Haber: %${Math.round(latest.weight_news * 100)}`);
+    weights.textContent = `Güncel ağırlıklar — ${parts.join(", ")}`;
   }
 }
 
