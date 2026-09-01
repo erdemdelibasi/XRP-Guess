@@ -39,10 +39,17 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
 - Yön sinyali dört bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
   ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag dahil),
   ML model (`ml_model.py`), XRPL balina/borsa akışı (`whale_signal.py`,
-  XRPSCAN public API — anahtar gerekmez) ve haber/düzenleyici sentiment
-  (`news_signal.py`, CryptoPanic — `CRYPTOPANIC_API_KEY` gerekir). Ağırlıklar
-  `retrain.py` tarafından günlük olarak son 14 günlük başarı oranına göre
-  güncellenir (`model_state` tablosu). `whale`/`news` çoğu 15dk'da "sessiz"
+  XRPSCAN public API) ve haber/düzenleyici sentiment (`news_signal.py`,
+  Google News RSS). **İkisi de anahtar gerektirmez, tamamen ücretsiz** —
+  CryptoPanic denendi ama ücretsiz katmanını kaldırmış (en ucuz plan
+  $50/hafta), o yüzden Google News RSS'e geçildi.
+  Ağırlıklar `retrain.py` tarafından günlük olarak son 14 günlük başarı
+  oranına göre güncellenir (`model_state` tablosu). `ensemble.recompute_weights`
+  her bileşeni **bağımsız** olarak günceller — bir bileşenin (ör. news)
+  henüz yeterli geçmişi yoksa sadece o bileşen varsayılan ağırlıkta kalır,
+  diğerlerinin kendi aralarında ayarlanmasını engellemez (bu bilinçli bir
+  düzeltme — ilk versiyon yanlışlıkla TÜM bileşenler hazır olana kadar
+  hiçbirini güncellemiyordu). `whale`/`news` çoğu 15dk'da "sessiz"
   (confidence=0) kalır — bu bir hata değil, `retrain.py` bu satırları isabet
   oranına dahil etmiyor (abstention). Yeni bir bileşen eklemek istersen
   `ensemble.COMPONENTS`'e ekleyip `predictions` tablosuna aynı 5-kolonluk

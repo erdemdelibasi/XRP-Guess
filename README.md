@@ -34,14 +34,12 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
 1. Bu klasörü kendi GitHub hesabında yeni bir **private** repo olarak paylaş
    (`git remote add origin ...` ve `git push`).
 2. Repo → **Settings → Secrets and variables → Actions → New repository secret**
-   ile şunları ekle:
+   ile şu ikisini ekle:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_KEY` (service_role key)
-   - `CRYPTOPANIC_API_KEY` — https://cryptopanic.com adresinde ücretsiz bir
-     hesap açıp **Developers → API** sayfasından alınan anahtar. Bu, sadece
-     haber sentiment sinyali için kullanılır; eklenmezse sistem çökmez, o
-     bileşen sadece sürekli "sessiz" (nötr) kalır. XRPL balina sinyali için
-     ayrıca bir anahtar gerekmez (XRPSCAN'ın herkese açık API'si kullanılır).
+
+   Balina sinyali (XRPSCAN) ve haber sinyali (Google News RSS) için ayrıca
+   bir anahtar gerekmez, ikisi de tamamen ücretsiz ve herkese açık.
 3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
    üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
    çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak
@@ -95,11 +93,14 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
     yorumlanır), net çıkış → yükseliş sinyali (biriktirme). Çoğu 15 dakikalık
     pencerede böyle büyük bir hareket olmaz, bu durumda sinyal **sessiz**
     (nötr) kalır — bu beklenen bir davranıştır, hata değildir.
-  - **Haber/düzenleyici sentiment** (`news_signal.py`): CryptoPanic'ten son
-    birkaç saatteki XRP başlıklarının topluluk oylarından (bullish/bearish)
-    bir skor üretir; SEC/dava/onay gibi düzenleyici kelimeler geçen
-    başlıklara ekstra ağırlık verir (XRP fiyatını tarihsel olarak en çok
-    hareket ettiren haber türü budur). Önemli bir haber yoksa sessiz kalır.
+  - **Haber/düzenleyici sentiment** (`news_signal.py`): Google News'in
+    ücretsiz RSS aramasından son birkaç saatteki XRP/Ripple başlıklarını
+    çeker, anahtar kelime eşleşmesinden (approve/lawsuit/win/fine vb.) bir
+    skor üretir; SEC/dava/onay gibi düzenleyici kelimeler geçen başlıklara
+    ekstra ağırlık verir (XRP fiyatını tarihsel olarak en çok hareket
+    ettiren haber türü budur). Oy tabanlı bir sentiment API'si olmadığı için
+    diğer bileşenlere göre daha zayıf/gürültülü bir sinyaldir — bu yüzden
+    ensemble'daki payı küçük tutulur. Eşleşen başlık yoksa sessiz kalır.
 
   Bu dört sinyal `ensemble.py` içinde, her birinin kendi geçmiş isabet
   oranıyla orantılı ağırlıklarla birleştirilip **bir sonraki çeyrek-saat
@@ -139,9 +140,12 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 - Balina sinyali, izlenen her borsa cüzdanı için XRPSCAN'da en fazla 6 sayfa
   (150 işlem) geriye gider; olağanüstü yoğun bir cüzdanda bu bile 120
   dakikalık pencerenin tamamını kapsamayabilir (yerel testte gerçek veriyle
-  doğrulandı — bkz. commit geçmişi). CryptoPanic'in ücretsiz
-  katmanı da hız sınırlıdır — rate limit'e takılınca haber sinyali o
-  çalışmada sessiz kalır, sistem çökmez.
-- "Borsaya giriş=düşüş, çıkış=yükseliş" ve haber-oy sentiment'i, akademik
-  literatürde sıkça kullanılan ama kesinliği kanıtlanmamış sezgisel
+  doğrulandı — bkz. commit geçmişi).
+- Haber sinyali oy tabanlı bir sentiment kaynağı değil, sadece başlık
+  metninde anahtar kelime araması yapıyor — bu nedenle diğer üç bileşene
+  göre daha kaba/gürültülü bir tahmindir; ensemble'daki payının küçük
+  tutulması ve kendi isabet geçmişi birikmeden ağırlığının artmaması
+  bilinçli bir tasarım kararıdır.
+- "Borsaya giriş=düşüş, çıkış=yükseliş" ve haber-başlık sentiment'i,
+  akademik literatürde sıkça kullanılan ama kesinliği kanıtlanmamış sezgisel
   (heuristic) yorumlardır — teknik/ML sinyalleri gibi bunlar da olasılıksaldır.
