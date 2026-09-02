@@ -131,6 +131,12 @@ const STRATEGY_CONFIG = {
 
 const strategyPieCharts = {};
 
+// Read the up/down colors from CSS custom properties so the chart palette
+// stays in sync with style.css instead of duplicating hex values here.
+const rootStyles = getComputedStyle(document.documentElement);
+const COLOR_UP = rootStyles.getPropertyValue("--up").trim() || "#34d399";
+const COLOR_DOWN = rootStyles.getPropertyValue("--down").trim() || "#fb7185";
+
 function computeStrategyAccuracy(predictions, correctField) {
   const resolved = predictions.filter((p) => p[correctField] != null);
   if (resolved.length === 0) return null;
@@ -281,16 +287,21 @@ function renderStrategyPanels(predictions, ensembleState, strategyStates, livePr
     const canvas = panel.querySelector(".strategy-pie");
     const pieData = {
       labels: ["Doğru", "Yanlış"],
-      datasets: [{ data: acc ? [acc.correct, acc.total - acc.correct] : [0, 0], backgroundColor: ["#2ecc71", "#e74c3c"] }],
+      datasets: [{
+        data: acc ? [acc.correct, acc.total - acc.correct] : [0, 0],
+        backgroundColor: [COLOR_UP, COLOR_DOWN],
+        borderWidth: 0,
+        hoverOffset: 0,
+      }],
     };
     if (strategyPieCharts[key]) {
       strategyPieCharts[key].data = pieData;
       strategyPieCharts[key].update();
     } else {
       strategyPieCharts[key] = new Chart(canvas, {
-        type: "pie",
+        type: "doughnut",
         data: pieData,
-        options: { plugins: { legend: { display: false } }, animation: false },
+        options: { cutout: "68%", plugins: { legend: { display: false } }, animation: false },
       });
     }
     panel.querySelector(".strategy-acc-summary").textContent = acc ? `${acc.total} tahminden ${acc.correct} doğru (%${acc.pct})` : "Bu aralıkta veri yok";
