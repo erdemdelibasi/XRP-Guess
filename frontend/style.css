@@ -196,14 +196,48 @@ td.pending { color: var(--muted); }
 .strategy-portfolio .direction { font-size: 0.72rem; padding: 3px 8px; }
 .strategy-cash-xrp { margin: 4px 0 0; }
 
+/* Trade history and prediction history are visually separate boxes, each
+   with its own top-right collapse toggle -- collapsing one (e.g. a quiet
+   strategy's near-empty trade history) keeps every panel's height aligned
+   even when the underlying row counts differ. */
+.strategy-history-block {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.strategy-history-block .table-wrap { margin-top: 4px; }
+.strategy-history-block.collapsed .table-wrap { display: none; }
+
+.strategy-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .strategy-subhead {
-  margin: 12px 0 4px;
   font-weight: 600;
   color: var(--text);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: .03em;
 }
+.strategy-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.7rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.strategy-toggle:hover { color: var(--text); border-color: var(--accent); }
+
 .strategy-panel table { font-size: 0.68rem; table-layout: auto; }
 .strategy-panel th, .strategy-panel td { padding: 4px 3px; }
 

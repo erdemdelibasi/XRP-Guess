@@ -161,23 +161,51 @@ function buildStrategyPanelsShell() {
         <span class="direction">-</span>
       </div>
       <p class="strategy-cash-xrp muted small">-</p>
-      <div class="strategy-subhead">İşlem Geçmişi</div>
-      <div class="table-wrap">
-        <table class="strategy-trades-table">
-          <thead><tr><th>Zaman</th><th>İşlem</th><th>Bakiye</th></tr></thead>
-          <tbody></tbody>
-        </table>
+      <div class="strategy-history-block" data-block="trades">
+        <div class="strategy-block-header">
+          <span class="strategy-subhead">İşlem Geçmişi</span>
+          <button type="button" class="strategy-toggle" aria-expanded="true" title="Gizle/Göster">▾</button>
+        </div>
+        <div class="table-wrap">
+          <table class="strategy-trades-table">
+            <thead><tr><th>Zaman</th><th>İşlem</th><th>Bakiye</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
-      <div class="strategy-subhead">Tahmin Geçmişi</div>
-      <div class="table-wrap">
-        <table class="strategy-history-table">
-          <thead><tr><th>Hedef</th><th>Tahmin</th><th>Sonuç</th></tr></thead>
-          <tbody></tbody>
-        </table>
+      <div class="strategy-history-block" data-block="predictions">
+        <div class="strategy-block-header">
+          <span class="strategy-subhead">Tahmin Geçmişi</span>
+          <button type="button" class="strategy-toggle" aria-expanded="true" title="Gizle/Göster">▾</button>
+        </div>
+        <div class="table-wrap">
+          <table class="strategy-history-table">
+            <thead><tr><th>Hedef</th><th>Tahmin</th><th>Sonuç</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     `;
     container.appendChild(panel);
   }
+}
+
+// Each history block has its own top-right toggle so the user can collapse
+// blocks with little/no data (e.g. a quiet strategy's trade history) to keep
+// every panel's row heights aligned -- delegated on the shared container
+// since panels are built once and never destroyed.
+function setupHistoryToggles() {
+  const container = document.getElementById("strategy-panels");
+  if (!container) return;
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest(".strategy-toggle");
+    if (!btn) return;
+    const block = btn.closest(".strategy-history-block");
+    if (!block) return;
+    const collapsed = block.classList.toggle("collapsed");
+    btn.textContent = collapsed ? "▸" : "▾";
+    btn.setAttribute("aria-expanded", String(!collapsed));
+  });
 }
 
 function renderStrategyTradesTable(panel, trades) {
@@ -395,6 +423,7 @@ const PREDICTIONS_REFRESH_MS = 30000;
 
 async function init() {
   setupRangeButtons();
+  setupHistoryToggles();
   startClock();
   startLivePricePolling();
   await loadPredictions();

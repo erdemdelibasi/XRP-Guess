@@ -181,7 +181,17 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `renderStrategyHistoryTable`) gösterir — eskiden sayfanın altında tek bir
   paylaşılan "İşlem Geçmişi"/"Geçmiş Tahminler" tablosu vardı (sadece
   ensemble'ı yansıtıyordu), kullanıcı bunun "pratik olmadığını" belirtip
-  her stratejinin kendi geçmişini görmek istedi, o yüzden kaldırıldı. Hangi
+  her stratejinin kendi geçmişini görmek istedi, o yüzden kaldırıldı. Bu iki
+  tablo panel içinde ayrı, kutulu iki blok (`.strategy-history-block`,
+  `data-block="trades"`/`"predictions"`) — her birinin sağ üst köşesinde
+  kendi aç/kapa düğmesi var (`setupHistoryToggles`, `#strategy-panels`
+  üzerinde event delegation, `.collapsed` class'ı `.table-wrap`'i gizler).
+  Amaç: bir stratejinin işlem/tahmin geçmişi diğerlerinden çok kısaysa
+  kullanıcı o bloğu kapatıp panelleri görsel olarak hizalayabiliyor —
+  otomatik değil, kullanıcının kendi seçimi. Panel shell'i bir kere
+  kurulduğu (`buildStrategyPanelsShell`) ve her yenilemede sadece `tbody`
+  içerikleri değiştiği için collapse durumu 30sn'lik otomatik yenilemeler
+  arasında korunur (tam sayfa yenilemesinde sıfırlanır, kalıcı değil). Hangi
   `predictions` kolonlarının okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı,
   yeni bir strateji eklemek istersen önce oraya bir giriş eklemen yeterli.
   `daily_report.py`'daki günlük mail de aynı 5 stratejiyi (isabet + gerçek
