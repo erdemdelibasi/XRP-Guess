@@ -1,4 +1,4 @@
-# XRP Tahmin Paneli
+# XRP-Guess
 
 Kişisel kullanım için XRP fiyat tahmin/izleme PWA'sı. Binance genel piyasa
 verisini kullanır, **hiçbir Binance API anahtarı yok, gerçek emir yok**.

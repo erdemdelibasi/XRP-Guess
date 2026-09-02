@@ -346,7 +346,7 @@ def render_html(report: dict) -> str:
 <table role="presentation" width="600" cellpadding="0" cellspacing="0"
        style="width:600px;max-width:100%;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:{TEXT};">
 <tr><td style="padding:0 20px 6px;">
-  <div style="font-size:20px;font-weight:700;">XRP Tahmin Paneli</div>
+  <div style="font-size:20px;font-weight:700;">XRP-Guess</div>
   <div style="font-size:13px;color:{MUTED};margin-top:2px;">Günlük Özet &mdash; {format_tr_date(report['end'])}</div>
 </td></tr>
 <tr><td style="padding:14px 20px 4px;font-size:14px;">Merhaba Erdem,</td></tr>
@@ -363,7 +363,7 @@ def render_html(report: dict) -> str:
 
 
 def render_email(report: dict) -> tuple[str, str, str]:
-    subject = f"XRP Tahmin Paneli - Günlük Özet ({format_tr_date(report['end'])})"
+    subject = f"XRP-Guess - Günlük Özet ({format_tr_date(report['end'])})"
     return subject, render_text(report), render_html(report)
 
 

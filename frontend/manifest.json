@@ -1,6 +1,6 @@
 {
-  "name": "XRP Tahmin Paneli",
-  "short_name": "XRP Tahmin",
+  "name": "XRP-Guess",
+  "short_name": "XRP-Guess",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

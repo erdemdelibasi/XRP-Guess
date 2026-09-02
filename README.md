@@ -1,4 +1,4 @@
-# XRP Tahmin Paneli
+# XRP-Guess
 
 Kişisel kullanım için: Binance'ın herkese açık piyasa verisi, XRP Ledger'ın
 kamuya açık zincir verisi ve haber sentiment'ini birlikte kullanarak XRP için
