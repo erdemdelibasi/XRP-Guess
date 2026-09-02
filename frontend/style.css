@@ -161,6 +161,57 @@ td.up { color: var(--up); }
 td.down { color: var(--down); }
 td.pending { color: var(--muted); }
 
+.strategy-cards-section .card, .strategy-cards-section { overflow: visible; }
+.strategy-cards-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  margin: 12px -18px -18px;
+  padding: 4px 18px 18px;
+}
+.strategy-card {
+  flex: 0 0 190px;
+  scroll-snap-align: start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.strategy-card h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.strategy-prediction {
+  min-height: 2.6em;
+  margin-bottom: 6px;
+  line-height: 1.35;
+}
+.strategy-prediction .up { color: var(--up); font-weight: 600; }
+.strategy-prediction .down { color: var(--down); font-weight: 600; }
+.strategy-pie { display: block; margin: 2px auto 4px; }
+.strategy-acc-summary { margin: 0 0 10px; line-height: 1.3; }
+.strategy-portfolio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.strategy-portfolio .value { font-weight: 700; font-size: 0.95rem; }
+.strategy-portfolio .direction { font-size: 0.72rem; padding: 3px 8px; }
+.strategy-trades-mini {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.68rem;
+  line-height: 1.7;
+}
+.strategy-trades-mini .up { color: var(--up); font-weight: 600; }
+.strategy-trades-mini .down { color: var(--down); font-weight: 600; }
+
 .disclaimer {
   margin-top: 8px;
   font-size: 0.75rem;

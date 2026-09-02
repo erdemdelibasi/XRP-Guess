@@ -24,7 +24,7 @@ TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
 TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
              "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri"}
-MIN_SAMPLES_FOR_BEST = 5  # below this, a high accuracy is just noise -- don't crown it "best of the day"
+STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber"}
 
 
 def format_tr_date(dt: datetime) -> str:
@@ -63,17 +63,16 @@ def component_accuracy(rows: list[dict], component: str) -> tuple[float | None, 
     return sum(1 for v in values if v) / len(values), len(values)
 
 
-def portfolio_state_as_of(db, cutoff: datetime) -> tuple[float, float]:
+def portfolio_state_as_of(db, cutoff: datetime, strategy: str = "ensemble") -> tuple[float, float]:
     """Reconstructs (cash_usd, xrp_amount) as of `cutoff` from the most
-    recent trade at or before it; STARTING_CASH/0 if there was none yet."""
-    res = (
-        db.table("trades")
-        .select("cash_after,xrp_after")
-        .lte("created_at", cutoff.isoformat())
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
+    recent trade at or before it; STARTING_CASH/0 if there was none yet.
+    `strategy`: "ensemble" reads `trades`, any of trading.STRATEGIES reads
+    `strategy_trades` filtered to that strategy."""
+    table = "trades" if strategy == "ensemble" else "strategy_trades"
+    query = db.table(table).select("cash_after,xrp_after").lte("created_at", cutoff.isoformat())
+    if strategy != "ensemble":
+        query = query.eq("strategy", strategy)
+    res = query.order("created_at", desc=True).limit(1).execute()
     if res.data:
         row = res.data[0]
         return float(row["cash_after"]), float(row["xrp_after"])
@@ -99,17 +98,45 @@ def price_as_of(db, cutoff: datetime) -> float | None:
     return None
 
 
-def trade_count_in_window(db, start: datetime, end: datetime) -> tuple[int, int, int]:
-    res = (
-        db.table("trades")
-        .select("side")
+def trade_count_in_window(db, start: datetime, end: datetime, strategy: str = "ensemble") -> tuple[int, int, int]:
+    table = "trades" if strategy == "ensemble" else "strategy_trades"
+    query = (
+        db.table(table).select("side")
         .gte("created_at", start.isoformat())
         .lt("created_at", end.isoformat())
-        .execute()
     )
+    if strategy != "ensemble":
+        query = query.eq("strategy", strategy)
+    res = query.execute()
     buys = sum(1 for r in res.data if r["side"] == "BUY")
     sells = sum(1 for r in res.data if r["side"] == "SELL")
     return len(res.data), buys, sells
+
+
+def strategy_report(db, strategy: str, start: datetime, end: datetime,
+                     price_start: float | None, price_now: float,
+                     accuracy: float | None, accuracy_count: int) -> dict:
+    """24h portfolio change + cumulative return since the $1000 start +
+    today's trade count + today's prediction accuracy, for one strategy --
+    lets a strategy's real (fee-inclusive) trading performance be judged
+    against its raw prediction accuracy side by side, not just one or the
+    other (a strategy can be "accurate" but still lose money to fees, as
+    technical/whale have shown in backtests)."""
+    cash_start, xrp_start = portfolio_state_as_of(db, start, strategy)
+    value_start = cash_start + xrp_start * (price_start if price_start is not None else price_now)
+
+    live_state = trading.get_portfolio_state(db, strategy)
+    cash_now, xrp_now = float(live_state["cash_usd"]), float(live_state["xrp_amount"])
+    value_now = cash_now + xrp_now * price_now
+
+    trade_total, buys, sells = trade_count_in_window(db, start, end, strategy)
+
+    return {
+        "value_start": value_start, "value_now": value_now,
+        "xrp_now": xrp_now, "position": live_state["position"],
+        "trade_total": trade_total, "buys": buys, "sells": sells,
+        "accuracy": accuracy, "accuracy_count": accuracy_count,
+    }
 
 
 def build_report(db) -> dict:
@@ -120,26 +147,25 @@ def build_report(db) -> dict:
 
     components = {c: component_accuracy(rows, c) for c in ensemble.COMPONENTS}
 
-    cash_start, xrp_start = portfolio_state_as_of(db, start)
     price_start = price_as_of(db, start)
     price_now = get_current_price(SYMBOL)
 
-    live_state = trading.get_portfolio_state(db)
-    cash_now, xrp_now = float(live_state["cash_usd"]), float(live_state["xrp_amount"])
-    value_now = cash_now + xrp_now * price_now
-    value_start = cash_start + xrp_start * (price_start if price_start is not None else price_now)
+    ensemble_accuracy = (len(correct) / len(resolved)) if resolved else None
+    strategies = {
+        "ensemble": strategy_report(db, "ensemble", start, end, price_start, price_now, ensemble_accuracy, len(resolved)),
+    }
+    for strategy in trading.STRATEGIES:
+        acc, count = components[strategy]
+        strategies[strategy] = strategy_report(db, strategy, start, end, price_start, price_now, acc, count)
 
-    trade_total, buys, sells = trade_count_in_window(db, start, end)
     weights = get_ensemble_weights(db)
 
     return {
         "start": start, "end": end,
         "total_predictions": len(rows), "resolved": len(resolved), "correct": len(correct),
         "components": components,
-        "value_start": value_start, "value_now": value_now,
-        "xrp_now": xrp_now, "position": live_state["position"],
+        "strategies": strategies,
         "price_start": price_start, "price_now": price_now,
-        "trade_total": trade_total, "buys": buys, "sells": sells,
         "weights": weights,
     }
 
@@ -159,26 +185,26 @@ def render_text(report: dict) -> str:
     else:
         lines.append(f"- {report['total_predictions']} tahmin yapıldı, henüz sonuçlanan yok")
 
-    comp_lines = []
-    best_name, best_acc = None, -1.0
-    for c in ensemble.COMPONENTS:
-        acc, count = report["components"][c]
-        label = COMPONENT_LABELS[c]
-        if acc is None:
-            comp_lines.append(f"{label}: yeterli veri yok")
-        else:
-            comp_lines.append(f"{label} %{acc * 100:.1f} ({count})")
-            if count >= MIN_SAMPLES_FOR_BEST and acc > best_acc:
-                best_name, best_acc = label, acc
-    if best_name is not None:
-        lines.append(f"- Bugün en başarılı bileşen: {best_name} (%{best_acc * 100:.1f})")
-    lines.append(f"- Bileşenler: {', '.join(comp_lines)}")
+    acc_o, count_o = report["components"]["orderbook"]
+    orderbook_text = f"%{acc_o * 100:.1f} ({count_o})" if acc_o is not None else "yeterli veri yok"
+    lines.append(f"- Emir defteri (kendi portföyü yok): {orderbook_text}")
 
-    lines += ["", "SANAL PORTFÖY"]
-    ret_pct = (report["value_now"] - report["value_start"]) / report["value_start"] * 100 if report["value_start"] else 0.0
-    lines.append(f"- Bakiye: ${report['value_start']:.2f} -> ${report['value_now']:.2f} ({ret_pct:+.2f}%)")
-    lines.append(f"- Şu an elde: {report['xrp_now']:.2f} XRP ({report['position']} pozisyonda)")
-    lines.append(f"- Bugün {report['trade_total']} işlem yapıldı ({report['buys']} AL, {report['sells']} SAT)")
+    lines += ["", "5 STRATEJİ PERFORMANSI (her biri kendi $1000 ile)"]
+    best_name, best_pct = None, float("-inf")
+    for strategy in ("ensemble", *trading.STRATEGIES):
+        s = report["strategies"][strategy]
+        label = STRATEGY_LABELS[strategy]
+        acc_text = f"%{s['accuracy'] * 100:.0f} isabet ({s['accuracy_count']})" if s["accuracy"] is not None else "isabet: veri yok"
+        today_pct = (s["value_now"] - s["value_start"]) / s["value_start"] * 100 if s["value_start"] else 0.0
+        total_pct = (s["value_now"] - trading.STARTING_CASH) / trading.STARTING_CASH * 100
+        lines.append(
+            f"- {label}: {acc_text} | ${s['value_now']:.2f} ({today_pct:+.2f}% bugün, {total_pct:+.2f}% toplam) "
+            f"| {s['trade_total']} işlem ({s['buys']} AL, {s['sells']} SAT)"
+        )
+        if today_pct > best_pct:
+            best_name, best_pct = label, today_pct
+    if best_name is not None:
+        lines.append(f"- Bugün en çok kazanan: {best_name} ({best_pct:+.2f}%)")
 
     lines += ["", "XRP/USDT FİYATI"]
     if report["price_start"] is not None:
@@ -223,6 +249,55 @@ def _pct_span(pct: float) -> str:
     return f'<span style="color:{color};font-weight:600;">{pct:+.2f}%</span>'
 
 
+def _strategy_table(report: dict) -> str:
+    """5-column comparison table (one row per strategy) -- accuracy next to
+    real fee-inclusive portfolio return, since they can diverge (an
+    "accurate" strategy can still lose money to fees, as backtests have
+    shown for technical/whale)."""
+    headers = ("Strateji", "İsabet", "Değer", "Bugün", "Toplam", "İşlem")
+    header_html = "".join(
+        f'<th style="padding:8px 10px;font-size:11px;color:{MUTED};text-align:left;'
+        f'border-bottom:1px solid {BORDER};white-space:nowrap;">{h}</th>'
+        for h in headers
+    )
+
+    body_rows = []
+    best_name, best_pct = None, float("-inf")
+    for strategy in ("ensemble", *trading.STRATEGIES):
+        s = report["strategies"][strategy]
+        label = STRATEGY_LABELS[strategy]
+        acc_html = f'%{s["accuracy"] * 100:.0f} <span style="color:{MUTED};">({s["accuracy_count"]})</span>' if s["accuracy"] is not None else f'<span style="color:{MUTED};">—</span>'
+        today_pct = (s["value_now"] - s["value_start"]) / s["value_start"] * 100 if s["value_start"] else 0.0
+        total_pct = (s["value_now"] - trading.STARTING_CASH) / trading.STARTING_CASH * 100
+        if today_pct > best_pct:
+            best_name, best_pct = label, today_pct
+
+        cells = [
+            label,
+            acc_html,
+            f"${s['value_now']:.2f}",
+            _pct_span(today_pct),
+            _pct_span(total_pct),
+            f'<span style="color:{MUTED};">{s["trade_total"]}</span>',
+        ]
+        tds = "".join(
+            f'<td style="padding:8px 10px;font-size:12px;border-top:1px solid {BORDER};white-space:nowrap;">{c}</td>'
+            for c in cells
+        )
+        body_rows.append(f"<tr>{tds}</tr>")
+
+    note = f'<tr><td colspan="6" style="padding:6px 10px 10px;font-size:11px;color:{MUTED};">Bugün en çok kazanan: <span style="color:{TEXT};">{best_name}</span> ({_pct_span(best_pct)})</td></tr>' if best_name else ""
+
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="background:{CARD};border-radius:10px;overflow:hidden;margin:0 0 14px;border:1px solid {BORDER};">'
+        f'<tr><td colspan="6" style="padding:10px 16px;background:{CARD_HEAD};'
+        f'font-size:12px;font-weight:700;letter-spacing:.04em;color:{TEXT};">📊 5 STRATEJİ PERFORMANSI '
+        f'<span style="font-weight:400;color:{MUTED};">(her biri kendi $1000 ile)</span></td></tr>'
+        f'<tr>{header_html}</tr>{"".join(body_rows)}{note}</table>'
+    )
+
+
 def render_html(report: dict) -> str:
     pred_rows = []
     if report["resolved"] > 0:
@@ -237,26 +312,9 @@ def render_html(report: dict) -> str:
     else:
         pred_rows.append(_row("Yapılan", f"{report['total_predictions']} (henüz sonuçlanan yok)"))
 
-    comp_bits, best_name, best_acc = [], None, -1.0
-    for c in ensemble.COMPONENTS:
-        acc, count = report["components"][c]
-        label = COMPONENT_LABELS[c]
-        if acc is None:
-            comp_bits.append(f'{label} <span style="color:{MUTED};">— veri yok</span>')
-        else:
-            comp_bits.append(f"{label} %{acc * 100:.1f} <span style=\"color:{MUTED};\">({count})</span>")
-            if count >= MIN_SAMPLES_FOR_BEST and acc > best_acc:
-                best_name, best_acc = label, acc
-    if best_name is not None:
-        pred_rows.append(_row("En başarılı bileşen", f'<span style="color:{UP};font-weight:600;">{best_name} (%{best_acc * 100:.1f})</span>'))
-    pred_rows.append(_row("Bileşenler", " · ".join(comp_bits)))
-
-    ret_pct = (report["value_now"] - report["value_start"]) / report["value_start"] * 100 if report["value_start"] else 0.0
-    portfolio_rows = [
-        _row("Bakiye", f"${report['value_start']:.2f} &rarr; ${report['value_now']:.2f} {_pct_span(ret_pct)}"),
-        _row("Şu an elde", f"{report['xrp_now']:.2f} XRP <span style=\"color:{MUTED};\">({report['position']})</span>"),
-        _row("Bugünkü işlemler", f"{report['trade_total']} <span style=\"color:{MUTED};\">({report['buys']} AL, {report['sells']} SAT)</span>"),
-    ]
+    acc_o, count_o = report["components"]["orderbook"]
+    orderbook_text = f"%{acc_o * 100:.1f} <span style=\"color:{MUTED};\">({count_o})</span>" if acc_o is not None else f'<span style="color:{MUTED};">veri yok</span>'
+    pred_rows.append(_row("Emir defteri (kendi portföyü yok)", orderbook_text))
 
     if report["price_start"] is not None:
         price_pct = (report["price_now"] - report["price_start"]) / report["price_start"] * 100
@@ -275,7 +333,7 @@ def render_html(report: dict) -> str:
 
     body = (
         _card("📊 TAHMİNLER", pred_rows)
-        + _card("💰 SANAL PORTFÖY", portfolio_rows)
+        + _strategy_table(report)
         + _card("💹 XRP/USDT FİYATI", price_rows)
         + _card("⚖️ ENSEMBLE AĞIRLIKLARI", weight_rows)
     )

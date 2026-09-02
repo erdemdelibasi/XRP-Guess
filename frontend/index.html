@@ -85,24 +85,13 @@
         tahmin yön değiştirdiğinde otomatik al/sat yapan bir simülasyon (%0.10 komisyon dahil).</p>
     </section>
 
-    <section class="card">
-      <h2>Strateji Karşılaştırması <span class="muted small">(her biri kendi $1000 ile)</span></h2>
-      <div class="table-wrap">
-        <table id="strategy-comparison-table">
-          <thead>
-            <tr>
-              <th>Strateji</th>
-              <th>Değer</th>
-              <th>Getiri</th>
-              <th>İsabet</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="muted small">Her satır, sadece o tek sinyale göre alım/satım yapan bağımsız bir
-        simülasyondur (gerçek para değil). Ensemble = ana model (tüm sinyallerin ağırlıklı
-        ortalaması) — yukarıdaki "Sanal Portföy" ile aynı portföy.</p>
+    <section class="card strategy-cards-section">
+      <h2>5 Model Karşılaştırması <span class="muted small">(her biri kendi $1000 ile)</span></h2>
+      <p class="muted small">Her kart, sadece o tek sinyale göre tahmin yapan ve alım/satım
+        gerçekleştiren bağımsız bir simülasyondur (gerçek para değil). Ensemble = ana model
+        (tüm sinyallerin ağırlıklı ortalaması) — yukarıdaki "Sanal Portföy" ile aynı portföy.
+        Kaydırarak diğer modelleri görebilirsin.</p>
+      <div class="strategy-cards-scroll" id="strategy-cards"></div>
     </section>
 
     <section class="card">

@@ -168,10 +168,17 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   uygulanmalı, `predict.py` canlı işlem yapmaya başlamadan önce (ya da
   hemen sonra — idempotent olduğu için kritik değil) backfill workflow'u
   manuel tetiklenmeli, yoksa backfill canlı birkaç işlemin üzerine yazar
-  (zararsız ama gereksiz). Frontend'de "Strateji Karşılaştırması" kartı
-  (`app.js:renderStrategyComparison`) 5'ini yan yana gösterir; isabet oranı
-  `predictions.{prefix}_correct` kolonlarından, değer `strategy_portfolios`
-  + canlı fiyattan hesaplanır.
+  (zararsız ama gereksiz). Frontend'de "5 Model Karşılaştırması" bölümü
+  (`app.js:renderStrategyCards`, yatay kaydırmalı 5 kart) her strateji için
+  güncel tahmin, kendi isabet pasta grafiği, portföy değeri/getirisi ve son
+  birkaç işlemi bir arada gösterir — hangi `predictions` kolonlarının
+  okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı, yeni bir strateji eklemek
+  istersen önce oraya bir giriş eklemen yeterli. `daily_report.py`'daki
+  günlük mail de aynı 5 stratejiyi (isabet + gerçek — komisyon dahil —
+  portföy getirisi yan yana) `_strategy_table()` ile ayrı bir tabloda
+  gösterir; ikisi de aynı `trading.get_portfolio_state(db, strategy)`/
+  `strategy_trades` verisinden besleniyor, birbirinden bağımsız hesap
+  yapmıyor.
 
 ## Geliştirme notları
 

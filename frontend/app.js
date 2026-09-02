@@ -3,7 +3,10 @@ let pieChart = null;
 let currentRangeDays = 7;
 let portfolioState = null;
 let strategyPortfolios = null;
+let tradesByStrategy = {};
 let lastLivePrice = null;
+
+const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news"]; // matches backend trading.STRATEGIES
 
 function supabaseHeaders() {
   return {
@@ -29,6 +32,13 @@ async function fetchPortfolioState() {
 
 async function fetchStrategyPortfolios() {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/strategy_portfolios?select=*`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
+}
+
+async function fetchStrategyTrades(strategy, limit = 6) {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/strategy_trades?select=*&strategy=eq.${strategy}&order=created_at.desc&limit=${limit}`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
@@ -205,7 +215,21 @@ function renderPortfolio(state, livePrice) {
   document.getElementById("portfolio-xrp").textContent = `${xrp.toFixed(4)} XRP`;
 }
 
-const STRATEGY_LABELS = { ensemble: "Ensemble (ana model)", technical: "Sadece Teknik", ml: "Sadece ML", whale: "Sadece Balina", news: "Sadece Haber" };
+// One config entry per strategy card: which predictions-table columns feed
+// its "current prediction" line and its accuracy pie. "ensemble" reuses the
+// top-level predicted_direction/confidence/correct columns (the final
+// blended call); the other four read that component's own dedicated
+// columns (already logged on every prediction row regardless of which
+// portfolio ends up using them).
+const STRATEGY_CONFIG = {
+  ensemble: { label: "Ensemble (ana model)", dirField: "predicted_direction", confField: "confidence", pctField: "predicted_pct_change", priceField: "predicted_price", correctField: "correct" },
+  technical: { label: "Sadece Teknik", dirField: "tech_direction", confField: "tech_confidence", pctField: "tech_pct_change", priceField: "tech_price", correctField: "tech_correct" },
+  ml: { label: "Sadece ML", dirField: "ml_direction", confField: "ml_confidence", pctField: "ml_pct_change", priceField: "ml_price", correctField: "ml_correct" },
+  whale: { label: "Sadece Balina", dirField: "whale_direction", confField: "whale_confidence", pctField: "whale_pct_change", priceField: "whale_price", correctField: "whale_correct" },
+  news: { label: "Sadece Haber", dirField: "news_direction", confField: "news_confidence", pctField: "news_pct_change", priceField: "news_price", correctField: "news_correct" },
+};
+
+const strategyPieCharts = {};
 
 function computeStrategyAccuracy(predictions, correctField) {
   const resolved = predictions.filter((p) => p[correctField] != null);
@@ -214,36 +238,96 @@ function computeStrategyAccuracy(predictions, correctField) {
   return { correct, total: resolved.length, pct: Math.round((correct / resolved.length) * 100) };
 }
 
-function renderStrategyComparison(predictions, ensembleState, strategyStates, livePrice) {
-  const tbody = document.querySelector("#strategy-comparison-table tbody");
-  if (!tbody || livePrice == null) return;
-  tbody.innerHTML = "";
+// Builds the 5 card shells once (Chart.js needs its <canvas> to already be
+// in the DOM before a chart is created on it) -- re-running this on every
+// refresh would destroy/recreate charts and DOM nodes for no reason.
+function buildStrategyCardsShell() {
+  const container = document.getElementById("strategy-cards");
+  if (!container || container.childElementCount > 0) return;
+  for (const [key, cfg] of Object.entries(STRATEGY_CONFIG)) {
+    const card = document.createElement("div");
+    card.className = "strategy-card";
+    card.dataset.strategy = key;
+    card.innerHTML = `
+      <h3>${cfg.label}</h3>
+      <div class="strategy-prediction muted small">-</div>
+      <canvas class="strategy-pie" width="100" height="100"></canvas>
+      <p class="strategy-acc-summary muted small center">-</p>
+      <div class="strategy-portfolio">
+        <span class="value">-</span>
+        <span class="direction">-</span>
+      </div>
+      <div class="strategy-trades-mini muted small">-</div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+function renderStrategyCards(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
+  if (livePrice == null || predictions.length === 0) return;
+  buildStrategyCardsShell();
 
   const byStrategy = Object.fromEntries((strategyStates ?? []).map((s) => [s.strategy, s]));
-  const rows = [
-    { key: "ensemble", state: ensembleState, correctField: "correct" },
-    { key: "technical", state: byStrategy.technical, correctField: "tech_correct" },
-    { key: "ml", state: byStrategy.ml, correctField: "ml_correct" },
-    { key: "whale", state: byStrategy.whale, correctField: "whale_correct" },
-    { key: "news", state: byStrategy.news, correctField: "news_correct" },
-  ];
+  const latest = predictions[0];
+  const rangeFiltered = filterByRange(predictions, currentRangeDays);
 
-  for (const row of rows) {
-    if (!row.state) continue;
-    const cash = Number(row.state.cash_usd);
-    const xrp = Number(row.state.xrp_amount);
-    const value = cash + xrp * livePrice;
-    const retPct = ((value - PORTFOLIO_START) / PORTFOLIO_START) * 100;
-    const acc = computeStrategyAccuracy(predictions, row.correctField);
+  for (const [key, cfg] of Object.entries(STRATEGY_CONFIG)) {
+    const card = document.querySelector(`.strategy-card[data-strategy="${key}"]`);
+    if (!card) continue;
+    const state = key === "ensemble" ? ensembleState : byStrategy[key];
 
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${STRATEGY_LABELS[row.key]}</td>
-      <td>$${value.toFixed(2)}</td>
-      <td class="${retPct >= 0 ? "up" : "down"}">${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%</td>
-      <td>${acc ? `%${acc.pct} (${acc.correct}/${acc.total})` : "-"}</td>
-    `;
-    tbody.appendChild(tr);
+    // Latest prediction line
+    const dir = latest[cfg.dirField];
+    const conf = latest[cfg.confField];
+    const predEl = card.querySelector(".strategy-prediction");
+    if (dir == null || conf == null || conf === 0) {
+      predEl.textContent = "Sessiz (sinyal yok)";
+    } else {
+      const arrow = dir === "UP" ? "▲" : "▼";
+      predEl.innerHTML = `<span class="${dir === "UP" ? "up" : "down"}">${arrow} %${Math.round(conf * 100)} güven</span> → ${fmtPrice(latest[cfg.priceField])} (${fmtPct(latest[cfg.pctField])})`;
+    }
+
+    // Accuracy pie (respects the same date-range buttons as the main pie)
+    const acc = computeStrategyAccuracy(rangeFiltered, cfg.correctField);
+    const canvas = card.querySelector(".strategy-pie");
+    const pieData = {
+      labels: ["Doğru", "Yanlış"],
+      datasets: [{ data: acc ? [acc.correct, acc.total - acc.correct] : [0, 0], backgroundColor: ["#2ecc71", "#e74c3c"] }],
+    };
+    if (strategyPieCharts[key]) {
+      strategyPieCharts[key].data = pieData;
+      strategyPieCharts[key].update();
+    } else {
+      strategyPieCharts[key] = new Chart(canvas, {
+        type: "pie",
+        data: pieData,
+        options: { plugins: { legend: { display: false } }, animation: false },
+      });
+    }
+    card.querySelector(".strategy-acc-summary").textContent = acc ? `${acc.total} tahminden ${acc.correct} doğru (%${acc.pct})` : "Bu aralıkta veri yok";
+
+    // Portfolio value/return
+    if (state) {
+      const cash = Number(state.cash_usd);
+      const xrp = Number(state.xrp_amount);
+      const value = cash + xrp * livePrice;
+      const retPct = ((value - PORTFOLIO_START) / PORTFOLIO_START) * 100;
+      card.querySelector(".strategy-portfolio .value").textContent = `$${value.toFixed(2)}`;
+      const retEl = card.querySelector(".strategy-portfolio .direction");
+      retEl.textContent = `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`;
+      retEl.className = `direction ${retPct >= 0 ? "up" : "down"}`;
+    }
+
+    // Last few trades, compact
+    const trades = tradesByStrategy?.[key] ?? [];
+    const tradesEl = card.querySelector(".strategy-trades-mini");
+    tradesEl.innerHTML = trades.length === 0
+      ? "Henüz işlem yok"
+      : trades.map((t) => {
+          const sideText = t.side === "BUY" ? "AL" : "SAT";
+          const sideClass = t.side === "BUY" ? "up" : "down";
+          return `<div><span class="${sideClass}">${sideText}</span> ${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)} <span class="muted">${fmtTime(t.created_at)}</span></div>`;
+        }).join("");
   }
 }
 
@@ -284,6 +368,9 @@ function setupRangeButtons() {
     btn.classList.add("active");
     currentRangeDays = Number(btn.dataset.range);
     renderAccuracy(allPredictions);
+    if (lastLivePrice != null) {
+      safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    }
   });
 }
 
@@ -318,9 +405,7 @@ async function updateLivePrice() {
     lastLivePrice = Number(data.price);
     document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
     if (portfolioState) safeRender(renderPortfolio, portfolioState, lastLivePrice);
-    if (portfolioState || strategyPortfolios) {
-      safeRender(renderStrategyComparison, allPredictions, portfolioState, strategyPortfolios, lastLivePrice);
-    }
+    safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -363,18 +448,25 @@ async function loadPredictions() {
 
   try {
     const trades = await fetchTrades();
+    tradesByStrategy.ensemble = trades.slice(0, 6);
     safeRender(renderTrades, trades);
   } catch (err) {
     console.error("Trades fetch failed:", err);
   }
 
   try {
-    strategyPortfolios = await fetchStrategyPortfolios();
-    if (lastLivePrice != null) {
-      safeRender(renderStrategyComparison, allPredictions, portfolioState, strategyPortfolios, lastLivePrice);
-    }
+    const [portfolios, ...perStrategyTrades] = await Promise.all([
+      fetchStrategyPortfolios(),
+      ...SINGLE_SIGNAL_STRATEGIES.map((s) => fetchStrategyTrades(s)),
+    ]);
+    strategyPortfolios = portfolios;
+    SINGLE_SIGNAL_STRATEGIES.forEach((s, i) => { tradesByStrategy[s] = perStrategyTrades[i]; });
   } catch (err) {
-    console.error("Strategy portfolios fetch failed:", err);
+    console.error("Strategy portfolios/trades fetch failed:", err);
+  }
+
+  if (lastLivePrice != null) {
+    safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
   }
 }
 
