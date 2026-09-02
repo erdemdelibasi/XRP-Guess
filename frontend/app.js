@@ -1,5 +1,4 @@
 let allPredictions = [];
-let pieChart = null;
 let currentRangeDays = 7;
 let portfolioState = null;
 let strategyPortfolios = null;
@@ -37,14 +36,14 @@ async function fetchStrategyPortfolios() {
   return res.json();
 }
 
-async function fetchStrategyTrades(strategy, limit = 6) {
+async function fetchStrategyTrades(strategy, limit = 10) {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/strategy_trades?select=*&strategy=eq.${strategy}&order=created_at.desc&limit=${limit}`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
 }
 
-async function fetchTrades(limit = 50) {
+async function fetchTrades(limit = 10) {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/trades?select=*&order=created_at.desc&limit=${limit}`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
@@ -71,70 +70,13 @@ function fmtPrice(price) {
   return `$${Number(price).toFixed(4)}`;
 }
 
-function renderCurrent(latest) {
-  document.getElementById("last-updated").textContent = fmtTime(latest.created_at);
-  document.getElementById("current-price").textContent = fmtPrice(latest.price_at_prediction);
-
-  const dirEl = document.getElementById("current-direction");
-  dirEl.textContent = latest.predicted_direction === "UP" ? "▲ Artış" : "▼ Azalış";
-  dirEl.className = `direction ${latest.predicted_direction === "UP" ? "up" : "down"}`;
-
-  document.getElementById("current-target").textContent = latest.target_time ? fmtTime(latest.target_time) : "-";
-  document.getElementById("current-predicted-price").textContent =
-    `${fmtPrice(latest.predicted_price)} (${fmtPct(latest.predicted_pct_change)})`;
-
-  document.getElementById("current-confidence").textContent = `%${Math.round(latest.confidence * 100)}`;
-  document.getElementById("tech-component").textContent =
-    `${latest.tech_direction ?? "-"} ${fmtPct(latest.tech_pct_change)} → ${fmtPrice(latest.tech_price)}`;
-  document.getElementById("ml-component").textContent =
-    `${latest.ml_direction ?? "-"} ${fmtPct(latest.ml_pct_change)} → ${fmtPrice(latest.ml_price)}`;
-
-  const whaleConfident = latest.whale_confidence != null && latest.whale_confidence > 0;
-  document.getElementById("whale-component").textContent = whaleConfident
-    ? `${latest.whale_direction} ${fmtPct(latest.whale_pct_change)} → ${fmtPrice(latest.whale_price)}`
-    : "Sessiz (büyük hareket yok)";
-
-  const newsConfident = latest.news_confidence != null && latest.news_confidence > 0;
-  document.getElementById("news-component").textContent = newsConfident
-    ? `${latest.news_direction} ${fmtPct(latest.news_pct_change)} → ${fmtPrice(latest.news_price)}`
-    : "Sessiz (önemli haber yok)";
-}
-
 function filterByRange(predictions, days) {
   if (!days) return predictions;
   const since = Date.now() - days * 24 * 60 * 60 * 1000;
   return predictions.filter((p) => new Date(p.created_at).getTime() >= since);
 }
 
-function renderAccuracy(predictions) {
-  const resolved = filterByRange(predictions, currentRangeDays).filter((p) => p.resolved_at);
-  const correct = resolved.filter((p) => p.correct).length;
-  const incorrect = resolved.length - correct;
-
-  const ctx = document.getElementById("accuracy-pie");
-  const data = {
-    labels: ["Doğru", "Yanlış"],
-    datasets: [{ data: [correct, incorrect], backgroundColor: ["#2ecc71", "#e74c3c"] }],
-  };
-  if (pieChart) {
-    pieChart.data = data;
-    pieChart.update();
-  } else {
-    pieChart = new Chart(ctx, {
-      type: "pie",
-      data,
-      options: { plugins: { legend: { labels: { color: "#e8edf2" } } } },
-    });
-  }
-
-  const summary = document.getElementById("accuracy-summary");
-  if (resolved.length === 0) {
-    summary.textContent = "Bu aralıkta henüz sonuçlanmış tahmin yok.";
-  } else {
-    const pct = Math.round((correct / resolved.length) * 100);
-    summary.textContent = `${resolved.length} tahminden ${correct} doğru (%${pct})`;
-  }
-
+function renderWeightsSummary(predictions) {
   const latest = predictions[0];
   const weights = document.getElementById("weights-summary");
   if (latest && latest.weight_technical != null) {
@@ -171,51 +113,9 @@ function roundWeightsTo100(entries) {
   return pct;
 }
 
-function renderHistory(predictions) {
-  const tbody = document.querySelector("#history-table tbody");
-  tbody.innerHTML = "";
-  predictions.slice(0, 50).forEach((p) => {
-    const tr = document.createElement("tr");
-
-    const resultClass = p.resolved_at == null ? "pending" : p.correct ? "up" : "down";
-    const resultText = p.resolved_at == null ? "Bekliyor" : p.correct ? "Doğru" : "Yanlış";
-    const predDirClass = p.predicted_direction === "UP" ? "up" : "down";
-
-    tr.innerHTML = `
-      <td>${p.target_time ? fmtTime(p.target_time) : "-"}</td>
-      <td class="${predDirClass}">
-        <div>${p.predicted_direction} ${fmtPct(p.predicted_pct_change)}</div>
-        <div class="sub">${fmtPrice(p.predicted_price)}</div>
-      </td>
-      <td>
-        <div>${p.actual_direction ?? "-"}</div>
-        <div class="sub">${fmtPrice(p.price_at_resolution)}</div>
-      </td>
-      <td class="${resultClass}">${resultText}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
 const PORTFOLIO_START = 1000;
 
-function renderPortfolio(state, livePrice) {
-  if (!state || livePrice == null) return;
-  const cash = Number(state.cash_usd);
-  const xrp = Number(state.xrp_amount);
-  const value = cash + xrp * livePrice;
-  const returnPct = (value - PORTFOLIO_START) / PORTFOLIO_START;
-
-  document.getElementById("portfolio-value").textContent = `$${value.toFixed(2)}`;
-  const retEl = document.getElementById("portfolio-return");
-  retEl.textContent = `${returnPct >= 0 ? "+" : ""}${(returnPct * 100).toFixed(2)}%`;
-  retEl.className = `direction ${returnPct >= 0 ? "up" : "down"}`;
-
-  document.getElementById("portfolio-cash").textContent = `$${cash.toFixed(2)}`;
-  document.getElementById("portfolio-xrp").textContent = `${xrp.toFixed(4)} XRP`;
-}
-
-// One config entry per strategy card: which predictions-table columns feed
+// One config entry per strategy panel: which predictions-table columns feed
 // its "current prediction" line and its accuracy pie. "ensemble" reuses the
 // top-level predicted_direction/confidence/correct columns (the final
 // blended call); the other four read that component's own dedicated
@@ -238,17 +138,20 @@ function computeStrategyAccuracy(predictions, correctField) {
   return { correct, total: resolved.length, pct: Math.round((correct / resolved.length) * 100) };
 }
 
-// Builds the 5 card shells once (Chart.js needs its <canvas> to already be
+// Builds the 5 panel shells once (Chart.js needs its <canvas> to already be
 // in the DOM before a chart is created on it) -- re-running this on every
-// refresh would destroy/recreate charts and DOM nodes for no reason.
-function buildStrategyCardsShell() {
-  const container = document.getElementById("strategy-cards");
+// refresh would destroy/recreate charts and DOM nodes for no reason. Each
+// panel carries its own trade-history and prediction-history table so every
+// strategy's full picture is visible side by side, with no per-panel
+// scrolling and no separate "shared" tables lower on the page.
+function buildStrategyPanelsShell() {
+  const container = document.getElementById("strategy-panels");
   if (!container || container.childElementCount > 0) return;
   for (const [key, cfg] of Object.entries(STRATEGY_CONFIG)) {
-    const card = document.createElement("div");
-    card.className = "strategy-card";
-    card.dataset.strategy = key;
-    card.innerHTML = `
+    const panel = document.createElement("div");
+    panel.className = "strategy-panel";
+    panel.dataset.strategy = key;
+    panel.innerHTML = `
       <h3>${cfg.label}</h3>
       <div class="strategy-prediction muted small">-</div>
       <canvas class="strategy-pie" width="100" height="100"></canvas>
@@ -257,29 +160,87 @@ function buildStrategyCardsShell() {
         <span class="value">-</span>
         <span class="direction">-</span>
       </div>
-      <div class="strategy-trades-mini muted small">-</div>
+      <p class="strategy-cash-xrp muted small">-</p>
+      <div class="strategy-subhead">İşlem Geçmişi</div>
+      <div class="table-wrap">
+        <table class="strategy-trades-table">
+          <thead><tr><th>Zaman</th><th>İşlem</th><th>Bakiye</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="strategy-subhead">Tahmin Geçmişi</div>
+      <div class="table-wrap">
+        <table class="strategy-history-table">
+          <thead><tr><th>Hedef</th><th>Tahmin</th><th>Sonuç</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     `;
-    container.appendChild(card);
+    container.appendChild(panel);
   }
 }
 
-function renderStrategyCards(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
+function renderStrategyTradesTable(panel, trades) {
+  const tbody = panel.querySelector(".strategy-trades-table tbody");
+  if (!trades || trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted center">Henüz işlem yok</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map((t) => {
+    const sideClass = t.side === "BUY" ? "up" : "down";
+    const sideText = t.side === "BUY" ? "AL" : "SAT";
+    return `
+      <tr>
+        <td>${fmtTime(t.created_at)}</td>
+        <td class="${sideClass}">${sideText}<span class="sub">${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)}</span></td>
+        <td>${fmtPrice(t.cash_after)}</td>
+      </tr>`;
+  }).join("");
+}
+
+function renderStrategyHistoryTable(panel, predictions, cfg) {
+  const tbody = panel.querySelector(".strategy-history-table tbody");
+  const rows = predictions.slice(0, 10);
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted center">Henüz veri yok</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((p) => {
+    const dir = p[cfg.dirField];
+    const conf = p[cfg.confField];
+    if (dir == null || (conf != null && conf === 0)) {
+      return `<tr><td>${p.target_time ? fmtTime(p.target_time) : "-"}</td><td class="muted" colspan="2">Sessiz</td></tr>`;
+    }
+    const correct = p[cfg.correctField];
+    const dirClass = dir === "UP" ? "up" : "down";
+    const resultClass = correct == null ? "pending" : correct ? "up" : "down";
+    const resultText = correct == null ? "Bekliyor" : correct ? "Doğru" : "Yanlış";
+    return `
+      <tr>
+        <td>${p.target_time ? fmtTime(p.target_time) : "-"}</td>
+        <td class="${dirClass}">${dir}<span class="sub">${fmtPct(p[cfg.pctField])}</span></td>
+        <td class="${resultClass}">${resultText}</td>
+      </tr>`;
+  }).join("");
+}
+
+function renderStrategyPanels(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
   if (livePrice == null || predictions.length === 0) return;
-  buildStrategyCardsShell();
+  buildStrategyPanelsShell();
 
   const byStrategy = Object.fromEntries((strategyStates ?? []).map((s) => [s.strategy, s]));
   const latest = predictions[0];
   const rangeFiltered = filterByRange(predictions, currentRangeDays);
 
   for (const [key, cfg] of Object.entries(STRATEGY_CONFIG)) {
-    const card = document.querySelector(`.strategy-card[data-strategy="${key}"]`);
-    if (!card) continue;
+    const panel = document.querySelector(`.strategy-panel[data-strategy="${key}"]`);
+    if (!panel) continue;
     const state = key === "ensemble" ? ensembleState : byStrategy[key];
 
     // Latest prediction line
     const dir = latest[cfg.dirField];
     const conf = latest[cfg.confField];
-    const predEl = card.querySelector(".strategy-prediction");
+    const predEl = panel.querySelector(".strategy-prediction");
     if (dir == null || conf == null || conf === 0) {
       predEl.textContent = "Sessiz (sinyal yok)";
     } else {
@@ -287,9 +248,9 @@ function renderStrategyCards(predictions, ensembleState, strategyStates, livePri
       predEl.innerHTML = `<span class="${dir === "UP" ? "up" : "down"}">${arrow} %${Math.round(conf * 100)} güven</span> → ${fmtPrice(latest[cfg.priceField])} (${fmtPct(latest[cfg.pctField])})`;
     }
 
-    // Accuracy pie (respects the same date-range buttons as the main pie)
+    // Accuracy pie (respects the same date-range buttons across all panels)
     const acc = computeStrategyAccuracy(rangeFiltered, cfg.correctField);
-    const canvas = card.querySelector(".strategy-pie");
+    const canvas = panel.querySelector(".strategy-pie");
     const pieData = {
       labels: ["Doğru", "Yanlış"],
       datasets: [{ data: acc ? [acc.correct, acc.total - acc.correct] : [0, 0], backgroundColor: ["#2ecc71", "#e74c3c"] }],
@@ -304,7 +265,7 @@ function renderStrategyCards(predictions, ensembleState, strategyStates, livePri
         options: { plugins: { legend: { display: false } }, animation: false },
       });
     }
-    card.querySelector(".strategy-acc-summary").textContent = acc ? `${acc.total} tahminden ${acc.correct} doğru (%${acc.pct})` : "Bu aralıkta veri yok";
+    panel.querySelector(".strategy-acc-summary").textContent = acc ? `${acc.total} tahminden ${acc.correct} doğru (%${acc.pct})` : "Bu aralıkta veri yok";
 
     // Portfolio value/return
     if (state) {
@@ -312,51 +273,17 @@ function renderStrategyCards(predictions, ensembleState, strategyStates, livePri
       const xrp = Number(state.xrp_amount);
       const value = cash + xrp * livePrice;
       const retPct = ((value - PORTFOLIO_START) / PORTFOLIO_START) * 100;
-      card.querySelector(".strategy-portfolio .value").textContent = `$${value.toFixed(2)}`;
-      const retEl = card.querySelector(".strategy-portfolio .direction");
+      panel.querySelector(".strategy-portfolio .value").textContent = `$${value.toFixed(2)}`;
+      const retEl = panel.querySelector(".strategy-portfolio .direction");
       retEl.textContent = `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`;
       retEl.className = `direction ${retPct >= 0 ? "up" : "down"}`;
+      panel.querySelector(".strategy-cash-xrp").textContent = `Nakit $${cash.toFixed(2)} · ${xrp.toFixed(4)} XRP`;
     }
 
-    // Last few trades, compact
-    const trades = tradesByStrategy?.[key] ?? [];
-    const tradesEl = card.querySelector(".strategy-trades-mini");
-    tradesEl.innerHTML = trades.length === 0
-      ? "Henüz işlem yok"
-      : trades.map((t) => {
-          const sideText = t.side === "BUY" ? "AL" : "SAT";
-          const sideClass = t.side === "BUY" ? "up" : "down";
-          return `<div><span class="${sideClass}">${sideText}</span> ${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)} <span class="muted">${fmtTime(t.created_at)}</span></div>`;
-        }).join("");
+    // Full per-strategy trade & prediction history (not just a mini list)
+    renderStrategyTradesTable(panel, tradesByStrategy?.[key]);
+    renderStrategyHistoryTable(panel, predictions, cfg);
   }
-}
-
-function renderTrades(trades) {
-  const tbody = document.querySelector("#trades-table tbody");
-  tbody.innerHTML = "";
-  if (trades.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted center">Henüz işlem yok</td></tr>';
-    return;
-  }
-  trades.forEach((t) => {
-    const tr = document.createElement("tr");
-    const sideClass = t.side === "BUY" ? "up" : "down";
-    const sideText = t.side === "BUY" ? "AL" : "SAT";
-
-    tr.innerHTML = `
-      <td>${fmtTime(t.created_at)}</td>
-      <td class="${sideClass}">
-        <div>${sideText}</div>
-        <div class="sub">${Number(t.xrp_amount).toFixed(2)} XRP @ ${fmtPrice(t.price)}</div>
-      </td>
-      <td>${fmtPrice(t.fee_usd)}</td>
-      <td>
-        <div>${fmtPrice(t.cash_after)}</div>
-        <div class="sub">${Number(t.xrp_after).toFixed(2)} XRP</div>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
 }
 
 function setupRangeButtons() {
@@ -367,9 +294,8 @@ function setupRangeButtons() {
     container.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     currentRangeDays = Number(btn.dataset.range);
-    renderAccuracy(allPredictions);
     if (lastLivePrice != null) {
-      safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+      safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
     }
   });
 }
@@ -404,8 +330,7 @@ async function updateLivePrice() {
     const data = await res.json();
     lastLivePrice = Number(data.price);
     document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
-    if (portfolioState) safeRender(renderPortfolio, portfolioState, lastLivePrice);
-    safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -433,23 +358,17 @@ async function loadPredictions() {
     document.getElementById("last-updated").textContent = "Henüz veri yok";
     return;
   }
-  safeRender(renderCurrent, allPredictions[0]);
-  safeRender(renderAccuracy, allPredictions);
-  safeRender(renderHistory, allPredictions);
+  document.getElementById("last-updated").textContent = fmtTime(allPredictions[0].created_at);
+  safeRender(renderWeightsSummary, allPredictions);
 
   try {
     portfolioState = await fetchPortfolioState();
-    if (portfolioState && lastLivePrice != null) {
-      safeRender(renderPortfolio, portfolioState, lastLivePrice);
-    }
   } catch (err) {
     console.error("Portfolio fetch failed:", err);
   }
 
   try {
-    const trades = await fetchTrades();
-    tradesByStrategy.ensemble = trades.slice(0, 6);
-    safeRender(renderTrades, trades);
+    tradesByStrategy.ensemble = await fetchTrades();
   } catch (err) {
     console.error("Trades fetch failed:", err);
   }
@@ -466,7 +385,7 @@ async function loadPredictions() {
   }
 
   if (lastLivePrice != null) {
-    safeRender(renderStrategyCards, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
   }
 }
 

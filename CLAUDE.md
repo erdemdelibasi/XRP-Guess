@@ -168,17 +168,27 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   uygulanmalı, `predict.py` canlı işlem yapmaya başlamadan önce (ya da
   hemen sonra — idempotent olduğu için kritik değil) backfill workflow'u
   manuel tetiklenmeli, yoksa backfill canlı birkaç işlemin üzerine yazar
-  (zararsız ama gereksiz). Frontend'de "5 Model Karşılaştırması" bölümü
-  (`app.js:renderStrategyCards`, yatay kaydırmalı 5 kart) her strateji için
-  güncel tahmin, kendi isabet pasta grafiği, portföy değeri/getirisi ve son
-  birkaç işlemi bir arada gösterir — hangi `predictions` kolonlarının
-  okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı, yeni bir strateji eklemek
-  istersen önce oraya bir giriş eklemen yeterli. `daily_report.py`'daki
-  günlük mail de aynı 5 stratejiyi (isabet + gerçek — komisyon dahil —
-  portföy getirisi yan yana) `_strategy_table()` ile ayrı bir tabloda
-  gösterir; ikisi de aynı `trading.get_portfolio_state(db, strategy)`/
-  `strategy_trades` verisinden besleniyor, birbirinden bağımsız hesap
-  yapmıyor.
+  (zararsız ama gereksiz). Frontend'de "5 Model Karşılaştırması" tek bir
+  sayfa (`app.js:renderStrategyPanels`) — CSS grid (`grid-template-columns:
+  repeat(auto-fit, minmax(240px,1fr))`) kullanır, kart listesi yatay
+  kaydırma DEĞİL: geniş tarayıcı penceresinde 5 panel otomatik yan yana
+  sığar, dar (telefon) ekranda tek sütuna düşer, hiçbir zaman cursor'la
+  yatay kaydırma gerekmez (önceki `strategy-cards-scroll` tasarımı
+  kullanıcı "kaydırmayı sevmiyorum, hepsini aynı anda görmek istiyorum"
+  diye reddetti). Her panel kendi güncel tahminini, isabet pasta grafiğini,
+  portföy değeri/getirisini VE kendi son 10 işlemini + son 10 tahmin
+  geçmişini (ayrı iki tabloyla, `renderStrategyTradesTable`/
+  `renderStrategyHistoryTable`) gösterir — eskiden sayfanın altında tek bir
+  paylaşılan "İşlem Geçmişi"/"Geçmiş Tahminler" tablosu vardı (sadece
+  ensemble'ı yansıtıyordu), kullanıcı bunun "pratik olmadığını" belirtip
+  her stratejinin kendi geçmişini görmek istedi, o yüzden kaldırıldı. Hangi
+  `predictions` kolonlarının okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı,
+  yeni bir strateji eklemek istersen önce oraya bir giriş eklemen yeterli.
+  `daily_report.py`'daki günlük mail de aynı 5 stratejiyi (isabet + gerçek
+  — komisyon dahil — portföy getirisi yan yana) `_strategy_table()` ile
+  ayrı bir tabloda gösterir; ikisi de aynı
+  `trading.get_portfolio_state(db, strategy)`/`strategy_trades`
+  verisinden besleniyor, birbirinden bağımsız hesap yapmıyor.
 
 ## Geliştirme notları
 
