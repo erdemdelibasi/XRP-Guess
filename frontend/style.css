@@ -104,7 +104,7 @@ button:focus-visible, input:focus-visible {
 
 /* App shell */
 #app {
-  max-width: 1500px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 16px 16px 40px;
 }
@@ -235,7 +235,7 @@ tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
    in either case. */
 .strategy-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
   margin-bottom: 16px;
 }
