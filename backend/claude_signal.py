@@ -42,7 +42,10 @@ RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "direction": {"type": "string", "enum": ["UP", "DOWN"]},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        # output_config.format's json_schema doesn't support "minimum"/
+        # "maximum" on a number property (rejected with a 400) -- the
+        # 0..1 range is clamped at runtime instead, below.
+        "confidence": {"type": "number"},
     },
     "required": ["direction", "confidence"],
     "additionalProperties": False,
