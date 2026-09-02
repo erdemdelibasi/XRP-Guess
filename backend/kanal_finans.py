@@ -9,6 +9,12 @@ ensemble.py and CLAUDE.md) -- we aren't forming an opinion here, just
 reporting one person's. predict.py never imports this module; it runs as its
 own standalone script on its own cron (see .github/workflows/kanal_finans.yml).
 
+For XRP specifically, each mention also carries a BUY/SELL/HOLD action plus
+any stop-loss/resistance price levels mentioned -- main() feeds these live to
+kanal_finans_trading.py, which mirrors them in a seventh $1000 paper
+portfolio (see that module and CLAUDE.md for why it's a different engine
+than trading.py's compute_rebalance()).
+
 Both the RSS feed and the transcript API are free/keyless, matching the
 project's general preference for public, no-signup data sources. The
 transcript API in particular is known to get IP-blocked from cloud/datacenter
@@ -32,11 +38,14 @@ from youtube_transcript_api._errors import CouldNotRetrieveTranscript
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
 import db as db_module
+import kanal_finans_trading
+from fetch_data import get_current_price
 
 CHANNEL_ID = "UCGBytjbMXiF1nbe6HD7iORQ"  # resolved once from youtube.com/@KanalFinans's canonical link; stable even if the handle changes
 RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id=" + CHANNEL_ID
 TIMEOUT = 15
 MAX_VIDEOS_PER_RUN = 15  # RSS feed itself only ever returns ~15 entries
+SYMBOL = "XRPUSDT"
 
 ASSETS = ("XRP", "BTC", "ETH", "KRIPTO")
 MODEL = "claude-sonnet-5"  # same model claude_signal.py uses; see CLAUDE.md for why Sonnet over Haiku
@@ -55,7 +64,17 @@ SYSTEM_PROMPT = (
     "(XRP/BTC/ETH -- bu ucune girmeyen ama genel kripto piyasasindan "
     "bahseden yorumlar icin KRIPTO), kisa (tek cumle, Turkce) bir ozet, ve "
     "konusmacinin tonuna gore stance (UP=yukselis bekliyor/olumlu, "
-    "DOWN=dusus bekliyor/olumsuz, NEUTRAL=kararsiz/net yon belirtmemis)."
+    "DOWN=dusus bekliyor/olumsuz, NEUTRAL=kararsiz/net yon belirtmemis).\n\n"
+    "Ayrica, SADECE asset=XRP olan bahisler icin (diger varliklar icin "
+    "action=HOLD, stop_loss_price=0, resistance_price=0 birak, biz sadece "
+    "XRP'de kagit-uzerinde islem yapiyoruz): konusmacinin net bir 'al/pozisyona "
+    "gir' onerisi mi (action=BUY), 'sat/pozisyondan cik/kar al' onerisi mi "
+    "(action=SELL), yoksa 'tut/bekle/degisiklik yok' mu (action=HOLD) dedigini "
+    "cikar. Eger belirtmisse zarar-kes/destek fiyat seviyesini "
+    "(stop_loss_price) ve direnc/hedef fiyat seviyesini (resistance_price) "
+    "sayi olarak ver -- bir seviye aralik olarak verilmisse (orn. '1.37-1.46') "
+    "daha temkinli (pozisyonu daha erken kapatan) ucu kullan. Belirtilmemisse "
+    "her ikisi icin de 0 kullan (0 = 'bahsedilmedi', gercek bir fiyat degil)."
 )
 
 RESPONSE_SCHEMA = {
@@ -69,8 +88,11 @@ RESPONSE_SCHEMA = {
                     "asset": {"type": "string", "enum": list(ASSETS)},
                     "summary": {"type": "string"},
                     "stance": {"type": "string", "enum": ["UP", "DOWN", "NEUTRAL"]},
+                    "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
+                    "stop_loss_price": {"type": "number"},
+                    "resistance_price": {"type": "number"},
                 },
-                "required": ["asset", "summary", "stance"],
+                "required": ["asset", "summary", "stance", "action", "stop_loss_price", "resistance_price"],
                 "additionalProperties": False,
             },
         },
@@ -177,7 +199,10 @@ def extract_mentions(video_title: str, transcript: str) -> list[dict] | None:
         return None
 
 
-def save_video_and_mentions(db, video: dict, transcript_found: bool, mentions: list[dict]) -> None:
+def save_video_and_mentions(db, video: dict, transcript_found: bool, mentions: list[dict]) -> list[dict]:
+    """Returns the inserted kanal_finans_mentions rows (with their real DB
+    ids) so main() can react to any XRP one -- kanal_finans_trading needs a
+    row id for triggered_by_mention_id."""
     db.table("kanal_finans_videos").insert({
         "video_id": video["video_id"],
         "video_title": video["title"],
@@ -185,19 +210,27 @@ def save_video_and_mentions(db, video: dict, transcript_found: bool, mentions: l
         "transcript_found": transcript_found,
     }).execute()
 
-    if mentions:
-        rows = [
-            {
-                "video_id": video["video_id"],
-                "video_title": video["title"],
-                "published_at": video["published"] or None,
-                "asset": m["asset"],
-                "summary": m["summary"],
-                "stance": m["stance"],
-            }
-            for m in mentions
-        ]
-        db.table("kanal_finans_mentions").insert(rows).execute()
+    if not mentions:
+        return []
+
+    rows = [
+        {
+            "video_id": video["video_id"],
+            "video_title": video["title"],
+            "published_at": video["published"] or None,
+            "asset": m["asset"],
+            "summary": m["summary"],
+            "stance": m["stance"],
+            "action": m["action"],
+            # 0 sentinel -> NULL: a real stored value should only ever be a
+            # price a level was actually mentioned at.
+            "stop_loss_price": m["stop_loss_price"] or None,
+            "resistance_price": m["resistance_price"] or None,
+        }
+        for m in mentions
+    ]
+    resp = db.table("kanal_finans_mentions").insert(rows).execute()
+    return resp.data
 
 
 def main() -> None:
@@ -233,8 +266,17 @@ def main() -> None:
             print(f"kanal_finans: Claude extraction failed for '{video['title']}' ({video['video_id']}), will retry next run.")
             continue
 
-        save_video_and_mentions(db, video, transcript_found=True, mentions=mentions)
+        saved = save_video_and_mentions(db, video, transcript_found=True, mentions=mentions)
         print(f"kanal_finans: processed '{video['title']}' -- {len(mentions)} mention(s).")
+
+        xrp_mentions = [m for m in saved if m["asset"] == "XRP"]
+        if xrp_mentions:
+            try:
+                price = get_current_price(SYMBOL)
+                for mention in xrp_mentions:
+                    kanal_finans_trading.apply_mention_decision(db, mention, price)
+            except Exception as exc:  # noqa: BLE001 -- a trading hiccup must not stop other videos from being processed
+                print(f"WARNING: kanal_finans trading update failed for '{video['title']}' ({exc})")
 
 
 if __name__ == "__main__":

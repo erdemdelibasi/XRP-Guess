@@ -22,6 +22,7 @@ import claude_signal as claude_signal_module
 from db import get_client
 import ensemble
 from fetch_data import get_current_price, get_klines, get_klines_history
+import kanal_finans_trading
 from indicators import (
     add_cross_asset_correlation,
     add_indicator_columns,
@@ -232,6 +233,18 @@ def main() -> int:
             trading.maybe_trade(db, strategy_name, prediction_id, signal["direction"], signal["confidence"], current_price)
         except Exception as exc:  # noqa: BLE001 -- one strategy's DB hiccup must not block the others
             print(f"WARNING: {strategy_name} portfolio update failed ({exc})")
+
+    # Kanal Finans TS's own paper portfolio (see kanal_finans_trading.py) --
+    # BUY/SELL decisions come from Tunc Satiroglu's videos (processed
+    # separately, locally, see CLAUDE.md), but its stop-loss has to be
+    # watched continuously, not just when a new video lands. This only
+    # touches Supabase + the price already fetched above, never YouTube, so
+    # it's unaffected by the IP-block issue that keeps kanal_finans.py itself
+    # off GitHub Actions.
+    try:
+        kanal_finans_trading.maybe_check_stop_loss(db, current_price)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: kanal_finans stop-loss check failed ({exc})")
 
     return 0
 

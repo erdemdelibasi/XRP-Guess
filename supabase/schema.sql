@@ -166,17 +166,57 @@ create table if not exists kanal_finans_videos (
 );
 
 create table if not exists kanal_finans_mentions (
-  id            bigint generated always as identity primary key,
-  created_at    timestamptz not null default now(),
-  video_id      text not null references kanal_finans_videos (video_id),
-  video_title   text,
-  published_at  timestamptz,
-  asset         text not null check (asset in ('XRP', 'BTC', 'ETH', 'KRIPTO')),
-  summary       text not null,
-  stance        text not null check (stance in ('UP', 'DOWN', 'NEUTRAL'))
+  id                bigint generated always as identity primary key,
+  created_at        timestamptz not null default now(),
+  video_id          text not null references kanal_finans_videos (video_id),
+  video_title       text,
+  published_at      timestamptz,
+  asset             text not null check (asset in ('XRP', 'BTC', 'ETH', 'KRIPTO')),
+  summary           text not null,
+  stance            text not null check (stance in ('UP', 'DOWN', 'NEUTRAL')),
+  -- Only meaningful for asset='XRP' (the only asset kanal_finans_portfolio
+  -- trades) -- see CLAUDE.md. 0 is the "not mentioned" sentinel for the two
+  -- price columns (same nullable-unsupported json_schema workaround as
+  -- claude_signal.py), not a real price.
+  action            text check (action in ('BUY', 'SELL', 'HOLD')),
+  stop_loss_price   numeric,
+  resistance_price  numeric
 );
 
 create index if not exists kanal_finans_mentions_published_idx on kanal_finans_mentions (published_at desc);
+
+-- Kanal Finans TS "takip portfoyu": kanal_finans_mentions'daki action/
+-- stop_loss_price'i harfiyen uygulayan yedinci $1000 kagit-portfoy --
+-- trading.compute_rebalance() DEGIL, kendi ikili (guven skorsuz) karar
+-- motoru kanal_finans_trading.py'de yasiyor (bkz. CLAUDE.md).
+create table if not exists kanal_finans_portfolio (
+  id                int primary key default 1,
+  cash_usd          numeric not null default 1000,
+  xrp_amount        numeric not null default 0,
+  position          text not null default 'CASH' check (position in ('CASH', 'LONG')),
+  stop_loss_price   numeric,
+  resistance_price  numeric,
+  updated_at        timestamptz not null default now(),
+  check (id = 1)
+);
+
+insert into kanal_finans_portfolio (id) values (1) on conflict (id) do nothing;
+
+create table if not exists kanal_finans_trades (
+  id                       bigint generated always as identity primary key,
+  created_at               timestamptz not null default now(),
+  side                     text not null check (side in ('BUY', 'SELL')),
+  price                    numeric not null,
+  xrp_amount               numeric not null,
+  usd_amount               numeric not null,
+  fee_usd                  numeric not null,
+  cash_after               numeric not null,
+  xrp_after                numeric not null,
+  triggered_by_mention_id  bigint references kanal_finans_mentions(id),
+  reason                   text
+);
+
+create index if not exists kanal_finans_trades_created_at_idx on kanal_finans_trades (created_at desc);
 
 -- Row Level Security: the frontend uses the public "anon" key and must only
 -- ever be able to read data. All writes come from the backend, which uses the
@@ -189,6 +229,8 @@ alter table strategy_portfolios enable row level security;
 alter table strategy_trades enable row level security;
 alter table kanal_finans_videos enable row level security;
 alter table kanal_finans_mentions enable row level security;
+alter table kanal_finans_portfolio enable row level security;
+alter table kanal_finans_trades enable row level security;
 
 create policy "public read predictions" on predictions
   for select using (true);
@@ -212,4 +254,10 @@ create policy "public read kanal_finans_videos" on kanal_finans_videos
   for select using (true);
 
 create policy "public read kanal_finans_mentions" on kanal_finans_mentions
+  for select using (true);
+
+create policy "public read kanal_finans_portfolio" on kanal_finans_portfolio
+  for select using (true);
+
+create policy "public read kanal_finans_trades" on kanal_finans_trades
   for select using (true);

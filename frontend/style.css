@@ -376,6 +376,13 @@ tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
 .stance-down { background: var(--down-soft); color: var(--down); }
 .stance-neutral { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
 
+.kanal-finans-portfolio-title {
+  margin-top: 16px !important;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+#kanal-finans-portfolio .strategy-portfolio { border-top: none; padding-top: 0; }
+
 .disclaimer {
   margin-top: 8px;
   padding-top: 14px;

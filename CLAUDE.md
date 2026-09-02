@@ -314,6 +314,44 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   altında, önemsiz. Backtest edilemez (canlı-only, geçmişe dönük ucuz bir
   replay yolu yok — `claude_signal.py` ile aynı sınırlama).
 
+- **Kanal Finans TŞ takip-portföyü** (`backend/kanal_finans_trading.py`):
+  yedinci $1000 kağıt-portföy — diğer altısı (ensemble + technical/ml/whale/
+  news/claude) `trading.compute_rebalance()`'ın güven-skalalı, 15-dakikalık-
+  periyot rebalance mantığından geçerken, **bu portföy `compute_rebalance()`'ı
+  hiç kullanmaz**. Sebep: Tunç Şatıroğlu sayısal bir güven vermiyor, ikili
+  (al/sat/tut) bir yorum veriyor — bu yüzden kendi küçük, olay-tabanlı karar
+  fonksiyonu (`decide_on_mention`/`check_stop_loss`) var. **Pozisyon büyüklüğü
+  tam giriş/çıkış** (diğer altısının güven-bazlı kısmi pozisyonundan bilinçli
+  fark) — kullanıcı bunu net olarak istedi ("bu adamın dediğini yap"), ve
+  ölçeklenecek bir güven sayısı zaten yok. `kanal_finans.py`'nin Claude
+  çıkarım şeması artık her XRP mention'ı için (diğer varlıklar için hep
+  action=HOLD, stop/direnç=0) `action`/`stop_loss_price`/`resistance_price`
+  de döndürüyor (0 = "bahsedilmedi" sentinel, `claude_signal.py`'deki gibi
+  bu json_schema dialect'i nullable desteklemediği için). Yeni bir mention
+  gelince (`kanal_finans.py:main()`, o anki canlı fiyatla) `apply_mention_decision`
+  BUY/SELL uygular; bir sonraki mention'da yeni bir seviye verilmemişse
+  **önceki izlenen zarar-kes/direnç seviyesi korunur** (Tunç her videoda
+  tekrar etmiyor). **Zarar-kes sürekli izlenir** — sadece yeni video geldiğinde
+  değil, `predict.py`'nin her 15 dakikalık döngüsünde de
+  (`kanal_finans_trading.maybe_check_stop_loss`, `main()`'in sonunda,
+  `trading.maybe_trade` döngüsünden hemen sonra) — bu çağrı sadece Supabase +
+  zaten çekilmiş `current_price`'a dokunuyor, **YouTube'a hiç gitmiyor**, o
+  yüzden `kanal_finans.py`'nin aksine GitHub Actions'ta sorunsuz çalışır.
+  **Direnç seviyesi kasıtlı olarak otomatik satış tetiklemez, sadece bilgi
+  amaçlı gösterilir** — canlı veride Tunç'un direnç kırılmasını bazen
+  "yükseliş fırsatı/alım" olarak yorumladığı görüldü (`"1.41 direncinin
+  geçilmesi bekleniyor, geçilirse alım fırsatı olabilir"`), yani
+  direnç=otomatik-sat sabit kuralı bazı durumlarda tam tersini yapardı; sadece
+  zarar-kes (destek) seviyesi otomatik SELL tetikler. **Geçmişe dönük
+  başlangıç**: `backend/backfill_kanal_finans_portfolio.py`
+  (`workflow_dispatch` yok, tek seferlik, elle yerelde çalıştırılır — YouTube'a
+  hiç dokunmuyor ama transkript arşivi tutulmuyor, o yüzden zaten var olan
+  `kanal_finans_mentions.summary` metninden yapılandırılmış alanları küçük bir
+  Claude çağrısıyla geriye dönük çıkarır) `kanal_finans_mentions`'daki XRP
+  satırlarını kronolojik sırayla gerçek 15dk Binance mumlarına (`fetch_data.py`)
+  karşı replay eder — `backfill_strategy_portfolios.py` ile aynı desen
+  (in-memory replay, idempotent, sonunda tek seferde DB'ye yaz).
+
 ## Geliştirme notları
 
 - Git kimliği kullanıcının makinesinde ayarlı (`erdemdelibasi@gmail.com`) —

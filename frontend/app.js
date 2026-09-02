@@ -3,6 +3,8 @@ let currentRangeDays = 7;
 let portfolioState = null;
 let strategyPortfolios = null;
 let tradesByStrategy = {};
+let kanalFinansPortfolio = null;
+let kanalFinansTrades = [];
 let lastLivePrice = null;
 // Toggled by clicking any strategy panel's return badge -- applies to all
 // panels at once so they stay comparable in the same unit.
@@ -64,6 +66,24 @@ async function fetchTrades(limit = 10) {
 // feed, not an ensemble component (see backend/kanal_finans.py, CLAUDE.md).
 async function fetchKanalFinansMentions(limit = 20) {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/kanal_finans_mentions?select=*&order=published_at.desc&limit=${limit}`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
+}
+
+// Kanal Finans TS "takip portfoyu" -- yedinci $1000 kagit-portfoy, BUY/SELL
+// kararlari Tunc Satiroglu'nun mention'larindan geliyor (guven-skoru yok,
+// diger alti portfoyden farkli bir motor -- bkz. backend/kanal_finans_trading.py).
+async function fetchKanalFinansPortfolio() {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/kanal_finans_portfolio?select=*&id=eq.1`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  const rows = await res.json();
+  return rows[0] ?? null;
+}
+
+async function fetchKanalFinansTrades(limit = 10) {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/kanal_finans_trades?select=*&order=created_at.desc&limit=${limit}`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
@@ -398,6 +418,49 @@ function renderKanalFinans(mentions) {
     </div>`).join("");
 }
 
+function renderKanalFinansPortfolio(state, trades, livePrice) {
+  const container = document.getElementById("kanal-finans-portfolio");
+  if (!state) {
+    container.innerHTML = '<p class="muted small center">Henüz veri yok</p>';
+    return;
+  }
+  const cash = Number(state.cash_usd);
+  const xrp = Number(state.xrp_amount);
+  const value = cash + xrp * (livePrice ?? 0);
+  const positionText = state.position === "LONG" ? "XRP'de" : "Nakitte";
+  const levels = [];
+  // Zarar-kes sadece pozisyondayken tetiklenebilir (bkz. kanal_finans_trading.
+  // check_stop_loss) -- nakitteyken gosterilmesi olmayan bir riski varmis
+  // gibi gosterip kafa karistirir, o yuzden sadece LONG'dayken listelenir.
+  if (state.position === "LONG" && state.stop_loss_price != null) {
+    levels.push(`İzlenen zarar-kes: ${fmtPrice(state.stop_loss_price)}`);
+  }
+  if (state.resistance_price != null) levels.push(`Son bilinen direnç/hedef (bilgi amaçlı): ${fmtPrice(state.resistance_price)}`);
+
+  const tradesRows = !trades || trades.length === 0
+    ? '<tr><td colspan="3" class="muted center">Henüz işlem yok</td></tr>'
+    : trades.map((t) => {
+        const sideClass = t.side === "BUY" ? "up" : "down";
+        const sideText = t.side === "BUY" ? "AL" : "SAT";
+        return `
+          <tr>
+            <td>${fmtTime(t.created_at)}</td>
+            <td class="${sideClass}">${sideText}<span class="sub">${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)}</span></td>
+            <td><span class="sub">${t.reason ?? ""}</span></td>
+          </tr>`;
+      }).join("");
+
+  container.innerHTML = `
+    <div class="strategy-portfolio">
+      <span class="value">${fmtPrice(value)}</span>
+      <span class="muted small">${positionText}</span>
+    </div>
+    ${levels.length ? `<p class="muted small">${levels.join(" · ")}</p>` : ""}
+    <div class="table-wrap">
+      <table><thead><tr><th>Zaman</th><th>İşlem</th><th>Neden</th></tr></thead><tbody>${tradesRows}</tbody></table>
+    </div>`;
+}
+
 function renderStrategyPanels(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
   if (livePrice == null || predictions.length === 0) return;
   buildStrategyPanelsShell();
@@ -523,6 +586,7 @@ async function updateLivePrice() {
     lastLivePrice = Number(data.price);
     document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
     safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    safeRender(renderKanalFinansPortfolio, kanalFinansPortfolio, kanalFinansTrades, lastLivePrice);
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -583,8 +647,18 @@ async function loadPredictions() {
     console.error("Kanal Finans fetch failed:", err);
   }
 
+  try {
+    [kanalFinansPortfolio, kanalFinansTrades] = await Promise.all([
+      fetchKanalFinansPortfolio(),
+      fetchKanalFinansTrades(),
+    ]);
+  } catch (err) {
+    console.error("Kanal Finans portfolio fetch failed:", err);
+  }
+
   if (lastLivePrice != null) {
     safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    safeRender(renderKanalFinansPortfolio, kanalFinansPortfolio, kanalFinansTrades, lastLivePrice);
   }
 }
 
