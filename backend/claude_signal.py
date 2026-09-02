@@ -23,7 +23,7 @@ import anthropic
 
 import news_signal
 
-MODEL = "claude-sonnet-5"
+MODEL = "claude-haiku-4-5"  # cheapest tier -- keeps a 96-calls/day cron affordable; see CLAUDE.md
 MAX_HEADLINES = 8
 NEUTRAL = {"direction": "UP", "confidence": 0.0, "score": 0.0}
 
@@ -80,13 +80,10 @@ def claude_signal(current_price: float, tech: dict, whale: dict) -> dict:
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _format_context(current_price, tech, whale, headlines)}],
-            output_config={
-                # A per-cycle classification-style judgment, not long-horizon
-                # reasoning -- low effort keeps the recurring cost down
-                # without materially hurting quality for a task this simple.
-                "effort": "low",
-                "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA},
-            },
+            # No `thinking`/`effort` here -- both are Opus/Sonnet-5-tier
+            # features that return a 400 on Haiku 4.5; omitting `thinking`
+            # simply runs without it, which is fine for a task this simple.
+            output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
         )
         text = next(b.text for b in response.content if b.type == "text")
         parsed = json.loads(text)
