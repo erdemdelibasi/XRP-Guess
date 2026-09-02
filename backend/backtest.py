@@ -4,11 +4,11 @@ technical+ML ensemble and the paper-trading strategy against real history.
 Touches no database.
 
 IMPORTANT LIMITATIONS (also printed in the report, not hidden):
-- Only the technical and ML components are backtested. whale/news/orderbook
-  are live-only signals with no free historical archive to replay, so this
-  approximates the ensemble as technical+ML only (fixed 50/50 between just
-  the two) -- something the real live system, with five components, never
-  actually runs as-is.
+- Only the technical and ML components are backtested. whale/news/orderbook/
+  claude are live-only signals with no free (or, for claude, no cheap) way
+  to replay them against history, so this approximates the ensemble as
+  technical+ML only (fixed 50/50 between just the two) -- something the
+  real live system, with six components, never actually runs as-is.
 - The ML model is trained ONCE on the first TRAIN_FRACTION of the window and
   evaluated out-of-sample on the rest. Production retrains daily; that
   rolling retraining loop is not replayed here.

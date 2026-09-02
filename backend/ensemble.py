@@ -1,14 +1,14 @@
 """Combines every signal component (technical, ml, whale, news, ...) into one
 final prediction, weighted by each component's recent track record."""
 
-COMPONENTS = ["technical", "ml", "whale", "news", "orderbook"]
-DEFAULT_WEIGHTS = {"technical": 0.28, "ml": 0.28, "whale": 0.14, "news": 0.12, "orderbook": 0.18}
+COMPONENTS = ["technical", "ml", "whale", "news", "orderbook", "claude"]
+DEFAULT_WEIGHTS = {"technical": 0.24, "ml": 0.24, "whale": 0.12, "news": 0.10, "orderbook": 0.15, "claude": 0.15}
 MIN_WEIGHT = 0.05  # floor so the ensemble never fully abandons a component
 
 # predictions-table column prefix per component. "technical" is shortened to
 # "tech" there to keep column names compact; every other component's columns
 # use its own name as-is.
-COLUMN_PREFIX = {"technical": "tech", "ml": "ml", "whale": "whale", "news": "news", "orderbook": "orderbook"}
+COLUMN_PREFIX = {"technical": "tech", "ml": "ml", "whale": "whale", "news": "news", "orderbook": "orderbook", "claude": "claude"}
 
 
 def combine(signals: dict[str, dict], weights: dict[str, float] | None = None) -> dict:

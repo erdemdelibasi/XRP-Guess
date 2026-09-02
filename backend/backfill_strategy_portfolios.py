@@ -1,7 +1,11 @@
-"""One-off (not scheduled): seeds the four single-signal strategy portfolios
-(technical/ml/whale/news -- see trading.py's module docstring) with what they
-would have done since the very first prediction, instead of starting them
-from a blank $1000 today. Run once via the "Backfill Strategy Portfolios"
+"""One-off (not scheduled): seeds the five single-signal strategy portfolios
+(technical/ml/whale/news/claude -- see trading.py's module docstring) with
+what they would have done since the very first prediction, instead of
+starting them from a blank $1000 today. A strategy whose columns didn't
+exist yet for a given historical row (e.g. every row before `claude` was
+added) simply has no direction/confidence to replay there, so replay()
+skips it -- that strategy just starts from $1000 at its own first real row,
+same as whale/news did originally. Run once via the "Backfill Strategy Portfolios"
 GitHub Actions workflow (workflow_dispatch), after the strategy_portfolios/
 strategy_trades migration has been applied and BEFORE (or shortly after --
 this is idempotent) predict.py starts live-trading them.
@@ -21,7 +25,12 @@ from db import get_client
 import trading
 
 PAGE_SIZE = 1000
-SELECT_COLUMNS = "id,created_at,price_at_prediction,tech_direction,tech_confidence,ml_direction,ml_confidence,whale_direction,whale_confidence,news_direction,news_confidence"
+SELECT_COLUMNS = (
+    "id,created_at,price_at_prediction,"
+    "tech_direction,tech_confidence,ml_direction,ml_confidence,"
+    "whale_direction,whale_confidence,news_direction,news_confidence,"
+    "claude_direction,claude_confidence"
+)
 
 
 def _fetch_all_predictions(db) -> list[dict]:

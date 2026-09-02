@@ -5,7 +5,7 @@ let strategyPortfolios = null;
 let tradesByStrategy = {};
 let lastLivePrice = null;
 
-const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news"]; // matches backend trading.STRATEGIES
+const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news", "claude"]; // matches backend trading.STRATEGIES
 
 function supabaseHeaders() {
   return {
@@ -80,13 +80,14 @@ function renderWeightsSummary(predictions) {
   const latest = predictions[0];
   const weights = document.getElementById("weights-summary");
   if (latest && latest.weight_technical != null) {
-    const labels = { technical: "Teknik", ml: "ML", whale: "Balina", news: "Haber", orderbook: "Emir Defteri" };
+    const labels = { technical: "Teknik", ml: "ML", whale: "Balina", news: "Haber", orderbook: "Emir Defteri", claude: "Claude" };
     const raw = [
       ["technical", latest.weight_technical],
       ["ml", latest.weight_ml],
       ["whale", latest.weight_whale],
       ["news", latest.weight_news],
       ["orderbook", latest.weight_orderbook],
+      ["claude", latest.weight_claude],
     ].filter(([, v]) => v != null);
     const pct = roundWeightsTo100(raw);
     const parts = raw.map(([key]) => `${labels[key]}: %${pct[key]}`);
@@ -138,6 +139,10 @@ const STRATEGY_CONFIG = {
   ml: { label: "Sadece ML", dirField: "ml_direction", confField: "ml_confidence", pctField: "ml_pct_change", priceField: "ml_price", correctField: "ml_correct" },
   whale: { label: "Sadece Balina", dirField: "whale_direction", confField: "whale_confidence", pctField: "whale_pct_change", priceField: "whale_price", correctField: "whale_correct", abstains: true },
   news: { label: "Sadece Haber", dirField: "news_direction", confField: "news_confidence", pctField: "news_pct_change", priceField: "news_price", correctField: "news_correct", abstains: true },
+  // claude_signal.py also returns the placeholder direction "UP" (its
+  // NEUTRAL constant) when no API key is configured yet or a call fails --
+  // same meaningless-direction-at-confidence-0 case as whale/news above.
+  claude: { label: "Sadece Claude", dirField: "claude_direction", confField: "claude_confidence", pctField: "claude_pct_change", priceField: "claude_price", correctField: "claude_correct", abstains: true },
 };
 
 const strategyPieCharts = {};
@@ -155,7 +160,7 @@ function computeStrategyAccuracy(predictions, correctField) {
   return { correct, total: resolved.length, pct: Math.round((correct / resolved.length) * 100) };
 }
 
-// Builds the 5 panel shells once (Chart.js needs its <canvas> to already be
+// Builds the 6 panel shells once (Chart.js needs its <canvas> to already be
 // in the DOM before a chart is created on it) -- re-running this on every
 // refresh would destroy/recreate charts and DOM nodes for no reason. Each
 // panel carries its own trade-history and prediction-history table so every

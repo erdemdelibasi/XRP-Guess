@@ -77,18 +77,19 @@ def _fetch_headlines() -> list[dict]:
     ]
 
 
-def news_signal() -> dict:
-    """Returns {"direction", "confidence", "score"} from recent XRP/Ripple
-    headline keyword sentiment. Neutral (confidence 0) if the feed can't be
-    fetched/parsed, or no headline in the lookback window matched any
-    keyword."""
+def recent_headlines() -> list[dict]:
+    """Fetches and returns raw headlines (title + published time) from the
+    last LOOKBACK_HOURS, newest data only -- shared with claude_signal.py,
+    which wants the actual headline text to reason over rather than just
+    this module's keyword-count score. Empty list on any fetch/parse
+    failure, same fail-soft contract as news_signal() itself."""
     try:
         headlines = _fetch_headlines()
     except (requests.RequestException, ET.ParseError):
-        return dict(NEUTRAL)
+        return []
 
     since = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
-    net_score = 0.0
+    recent = []
     for item in headlines:
         try:
             when = parsedate_to_datetime(item["pubDate"])
@@ -96,9 +97,20 @@ def news_signal() -> dict:
             continue
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
-        if when < since:
-            continue
+        if when >= since:
+            recent.append({"title": item["title"], "published": when.isoformat()})
+    return recent
 
+
+def news_signal() -> dict:
+    """Returns {"direction", "confidence", "score"} from recent XRP/Ripple
+    headline keyword sentiment. Neutral (confidence 0) if the feed can't be
+    fetched/parsed, or no headline in the lookback window matched any
+    keyword."""
+    headlines = recent_headlines()
+
+    net_score = 0.0
+    for item in headlines:
         title = item["title"].lower()
         pos_hits = len(_keyword_hits(title, POSITIVE_KEYWORDS))
         neg_hits = len(_keyword_hits(title, NEGATIVE_KEYWORDS))

@@ -32,11 +32,16 @@ create table if not exists predictions (
   orderbook_confidence  numeric,
   orderbook_pct_change  numeric,
   orderbook_price       numeric,
+  claude_direction      text,
+  claude_confidence     numeric,
+  claude_pct_change     numeric,
+  claude_price          numeric,
   weight_technical      numeric,
   weight_ml             numeric,
   weight_whale          numeric,
   weight_news           numeric,
   weight_orderbook      numeric,
+  weight_claude         numeric,
   model_version         text,
 
   resolved_at           timestamptz,
@@ -47,7 +52,8 @@ create table if not exists predictions (
   ml_correct            boolean,
   whale_correct         boolean,
   news_correct          boolean,
-  orderbook_correct     boolean
+  orderbook_correct     boolean,
+  claude_correct        boolean
 );
 
 create index if not exists predictions_created_at_idx on predictions (created_at desc);
@@ -55,18 +61,19 @@ create index if not exists predictions_target_time_idx on predictions (target_ti
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
 
 create table if not exists model_state (
-  component        text primary key check (component in ('technical', 'ml', 'whale', 'news', 'orderbook')),
+  component        text primary key check (component in ('technical', 'ml', 'whale', 'news', 'orderbook', 'claude')),
   weight           numeric not null default 0.2,
   rolling_accuracy numeric,
   updated_at       timestamptz not null default now()
 );
 
 insert into model_state (component, weight) values
-  ('technical', 0.28),
-  ('ml', 0.28),
-  ('whale', 0.14),
-  ('news', 0.12),
-  ('orderbook', 0.18)
+  ('technical', 0.24),
+  ('ml', 0.24),
+  ('whale', 0.12),
+  ('news', 0.10),
+  ('orderbook', 0.15),
+  ('claude', 0.15)
 on conflict (component) do nothing;
 
 -- Virtual $1000 paper-trading portfolio: simulates automatically buying/
@@ -104,16 +111,16 @@ create table if not exists trades (
 
 create index if not exists trades_created_at_idx on trades (created_at desc);
 
--- Four more $1000 paper portfolios, one per individual signal (technical-only,
--- ml-only, whale-only, news-only), independent of the weighted ensemble
--- portfolio above -- lets us compare a single-signal strategy's real
+-- Five more $1000 paper portfolios, one per individual signal (technical-only,
+-- ml-only, whale-only, news-only, claude-only), independent of the weighted
+-- ensemble portfolio above -- lets us compare a single-signal strategy's real
 -- performance against the ensemble instead of only ever seeing them blended
 -- together. orderbook isn't included here -- see CLAUDE.md for why the user
--- scoped this to just these four. Same shape as portfolio_state/trades so
+-- scoped this to just these five. Same shape as portfolio_state/trades so
 -- trading.py can reuse the exact same compute_rebalance()-driven logic, just
 -- routed to these tables via a `strategy` argument instead of a fixed id=1.
 create table if not exists strategy_portfolios (
-  strategy               text primary key check (strategy in ('technical', 'ml', 'whale', 'news')),
+  strategy               text primary key check (strategy in ('technical', 'ml', 'whale', 'news', 'claude')),
   cash_usd               numeric not null default 1000,
   xrp_amount             numeric not null default 0,
   position               text not null default 'CASH' check (position in ('CASH', 'LONG')),
@@ -122,12 +129,12 @@ create table if not exists strategy_portfolios (
   updated_at             timestamptz not null default now()
 );
 
-insert into strategy_portfolios (strategy) values ('technical'), ('ml'), ('whale'), ('news')
+insert into strategy_portfolios (strategy) values ('technical'), ('ml'), ('whale'), ('news'), ('claude')
   on conflict (strategy) do nothing;
 
 create table if not exists strategy_trades (
   id                          bigint generated always as identity primary key,
-  strategy                    text not null check (strategy in ('technical', 'ml', 'whale', 'news')),
+  strategy                    text not null check (strategy in ('technical', 'ml', 'whale', 'news', 'claude')),
   created_at                  timestamptz not null default now(),
   side                        text not null check (side in ('BUY', 'SELL')),
   price                       numeric not null,

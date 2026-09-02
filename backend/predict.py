@@ -1,13 +1,13 @@
 """Entry point run every 15 minutes by GitHub Actions.
 
 Each run predicts the price at the *next* quarter-hour clock mark (e.g. a run
-at 18:07 targets 18:15; a run at 18:16 targets 18:30) using five independent
+at 18:07 targets 18:15; a run at 18:16 targets 18:30) using six independent
 signal components -- a rule-based technical signal, an ML model, an on-chain
-XRPL whale/exchange-flow signal, a news/regulatory sentiment signal, and a
-live order-book imbalance signal -- combined by ensemble.py. Over the course
-of an hour this naturally produces four checkpoints -- :15, :30, :45, :00 --
-each with its own expected percentage change and target price, from every
-method.
+XRPL whale/exchange-flow signal, a news/regulatory sentiment signal, a live
+order-book imbalance signal, and a Claude API judgment call -- combined by
+ensemble.py. Over the course of an hour this naturally produces four
+checkpoints -- :15, :30, :45, :00 -- each with its own expected percentage
+change and target price, from every method.
 
 No Binance API key is used or required -- only public market data endpoints.
 
@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import calibration
+import claude_signal as claude_signal_module
 from db import get_client
 import ensemble
 from fetch_data import get_current_price, get_klines, get_klines_history
@@ -67,6 +68,7 @@ def resolve_due_predictions(db, current_price: float) -> None:
         whale_correct = row.get("whale_direction") is not None and actual_direction == row["whale_direction"]
         news_correct = row.get("news_direction") is not None and actual_direction == row["news_direction"]
         orderbook_correct = row.get("orderbook_direction") is not None and actual_direction == row["orderbook_direction"]
+        claude_correct = row.get("claude_direction") is not None and actual_direction == row["claude_direction"]
 
         db.table("predictions").update({
             "resolved_at": now_iso,
@@ -78,6 +80,7 @@ def resolve_due_predictions(db, current_price: float) -> None:
             "whale_correct": whale_correct,
             "news_correct": news_correct,
             "orderbook_correct": orderbook_correct,
+            "claude_correct": claude_correct,
         }).eq("id", row["id"]).execute()
         print(f"Resolved prediction {row['id']} (target {row['target_time']}): "
               f"predicted={row['predicted_direction']} actual={actual_direction} correct={correct}")
@@ -149,9 +152,12 @@ def main() -> int:
     whale = safe_signal(whale_signal_module.whale_signal, current_price, label="whale")
     news = safe_signal(news_signal_module.news_signal, label="news")
     orderbook = safe_signal(orderbook_signal_module.orderbook_signal, label="orderbook")
+    # Given tech's/whale's own (pre-calibration) signals as context -- see
+    # claude_signal.py for why calibrated confidence isn't used here.
+    claude = safe_signal(claude_signal_module.claude_signal, current_price, tech, whale, label="claude")
 
     weights = get_ensemble_weights(db)
-    signals = {"technical": tech, "ml": ml, "whale": whale, "news": news, "orderbook": orderbook}
+    signals = {"technical": tech, "ml": ml, "whale": whale, "news": news, "orderbook": orderbook, "claude": claude}
     final = ensemble.combine(signals, weights)
 
     volatility = recent_volatility(xrp)
@@ -160,6 +166,7 @@ def main() -> int:
     whale_pct = estimate_pct_change(whale["score"], volatility)
     news_pct = estimate_pct_change(news["score"], volatility)
     orderbook_pct = estimate_pct_change(orderbook["score"], volatility)
+    claude_pct = estimate_pct_change(claude["score"], volatility)
     final_pct = estimate_pct_change(final["score"], volatility)
 
     target_time = next_quarter_hour(now)
@@ -192,11 +199,16 @@ def main() -> int:
         "orderbook_confidence": orderbook["confidence"],
         "orderbook_pct_change": orderbook_pct,
         "orderbook_price": current_price * (1 + orderbook_pct),
+        "claude_direction": claude["direction"],
+        "claude_confidence": claude["confidence"],
+        "claude_pct_change": claude_pct,
+        "claude_price": current_price * (1 + claude_pct),
         "weight_technical": weights["technical"],
         "weight_ml": weights["ml"],
         "weight_whale": weights["whale"],
         "weight_news": weights["news"],
         "weight_orderbook": weights["orderbook"],
+        "weight_claude": weights["claude"],
         "model_version": model_version,
     }).execute()
 
@@ -204,15 +216,16 @@ def main() -> int:
           f"{final['direction']} {final_pct * 100:+.2f}% -> {current_price * (1 + final_pct):.4f} "
           f"[tech={tech['direction']}/{tech_pct * 100:+.2f}%, ml={ml['direction']}/{ml_pct * 100:+.2f}%, "
           f"whale={whale['direction']}/{whale['confidence']:.2f}, news={news['direction']}/{news['confidence']:.2f}, "
-          f"orderbook={orderbook['direction']}/{orderbook['confidence']:.2f}, weights={weights}]")
+          f"orderbook={orderbook['direction']}/{orderbook['confidence']:.2f}, "
+          f"claude={claude['direction']}/{claude['confidence']:.2f}, weights={weights}]")
 
     prediction_id = inserted.data[0]["id"] if inserted.data else None
 
-    # The ensemble portfolio plus four independent single-signal-only
-    # portfolios (technical-only, ml-only, whale-only, news-only) -- lets a
-    # signal's real paper-trading performance be compared against the
-    # blended ensemble instead of only ever being seen mixed together.
-    strategy_signals = {"technical": tech, "ml": ml, "whale": whale, "news": news}
+    # The ensemble portfolio plus five independent single-signal-only
+    # portfolios (technical-only, ml-only, whale-only, news-only, claude-only)
+    # -- lets a signal's real paper-trading performance be compared against
+    # the blended ensemble instead of only ever being seen mixed together.
+    strategy_signals = {"technical": tech, "ml": ml, "whale": whale, "news": news, "claude": claude}
     for strategy_name in ("ensemble", *trading.STRATEGIES):
         signal = final if strategy_name == "ensemble" else strategy_signals[strategy_name]
         try:

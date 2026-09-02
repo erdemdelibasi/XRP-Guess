@@ -230,7 +230,7 @@ td.pending { color: var(--muted); }
 tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
 
 /* 5-strategy comparison: a responsive grid, not a horizontally-scrolled row --
-   auto-fit naturally goes to 5 side-by-side columns on a wide browser window
+   auto-fit naturally goes to several side-by-side columns on a wide browser window
    and collapses to a single column on a phone, with no cursor-drag scrolling
    in either case. */
 .strategy-grid {

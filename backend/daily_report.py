@@ -23,8 +23,8 @@ import trading
 TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
 TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
              "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri"}
-STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber"}
+COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri", "claude": "Claude"}
+STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "claude": "Claude"}
 
 
 def format_tr_date(dt: datetime) -> str:
