@@ -276,7 +276,8 @@ tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
   border-top: 1px solid var(--border);
 }
 .strategy-portfolio .value { font-weight: 700; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
-.strategy-portfolio .direction { font-size: 0.72rem; padding: 3px 8px; }
+.strategy-portfolio .direction { font-size: 0.72rem; padding: 3px 8px; cursor: pointer; user-select: none; }
+.strategy-portfolio .direction:hover { filter: brightness(1.15); }
 .strategy-cash-xrp { margin: 4px 0 0; }
 
 /* Trade history and prediction history are visually separate boxes, each

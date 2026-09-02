@@ -4,6 +4,16 @@ let portfolioState = null;
 let strategyPortfolios = null;
 let tradesByStrategy = {};
 let lastLivePrice = null;
+// Toggled by clicking any strategy panel's return badge -- applies to all
+// panels at once so they stay comparable in the same unit.
+let showPnlInDollars = false;
+// Portfolio value at the start of the currently-selected date range, per
+// strategy, so the return badge can show *that period's* profit/loss
+// instead of always the all-time change since the $1000 start. Populated by
+// loadRangePnlBoundary(); `days` guards against using a stale cache while a
+// new range's fetch is still in flight (falls back to the all-time PORTFOLIO_START
+// baseline in the meantime).
+const RANGE_PNL_CACHE = { days: null, boundaries: null, price: null };
 
 const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news", "claude"]; // matches backend trading.STRATEGIES
 
@@ -48,6 +58,70 @@ async function fetchTrades(limit = 10) {
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
+}
+
+// Holdings as of the last trade at-or-before `boundaryIso` -- the starting
+// point for computing that strategy's profit/loss over the selected range.
+// No matching row means the strategy hadn't traded yet by then, i.e. it was
+// still sitting at its untouched $1000/0 XRP starting state.
+async function fetchBoundaryTrade(table, strategyFilter, boundaryIso) {
+  const strategyParam = strategyFilter ? `&strategy=eq.${strategyFilter}` : "";
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/${table}?select=cash_after,xrp_after&order=created_at.desc&created_at=lte.${boundaryIso}&limit=1${strategyParam}`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  const rows = await res.json();
+  return rows[0] ?? null;
+}
+
+async function fetchPriceAt(boundaryMs) {
+  const url = `https://data-api.binance.vision/api/v3/klines?symbol=XRPUSDT&interval=15m&startTime=${boundaryMs}&limit=1`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Binance klines fetch failed: ${res.status}`);
+  const data = await res.json();
+  return data.length ? Number(data[0][4]) : null; // close price
+}
+
+// Fetches, once per range-button click, the cash/XRP holdings and XRP price
+// at the start of the selected range for every strategy -- cached so the
+// 3-second live-price tick doesn't refetch this on every render.
+async function loadRangePnlBoundary(days) {
+  const boundaryMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const boundaryIso = new Date(boundaryMs).toISOString();
+  const [price, ensembleTrade, ...strategyTrades] = await Promise.all([
+    fetchPriceAt(boundaryMs),
+    fetchBoundaryTrade("trades", null, boundaryIso),
+    ...SINGLE_SIGNAL_STRATEGIES.map((s) => fetchBoundaryTrade("strategy_trades", s, boundaryIso)),
+  ]);
+  const toHoldings = (trade) => ({
+    cash: trade ? Number(trade.cash_after) : PORTFOLIO_START,
+    xrp: trade ? Number(trade.xrp_after) : 0,
+  });
+  const boundaries = { ensemble: toHoldings(ensembleTrade) };
+  SINGLE_SIGNAL_STRATEGIES.forEach((s, i) => { boundaries[s] = toHoldings(strategyTrades[i]); });
+  RANGE_PNL_CACHE.days = days;
+  RANGE_PNL_CACHE.price = price;
+  RANGE_PNL_CACHE.boundaries = boundaries;
+}
+
+// Profit/loss since the start of the selected range. Falls back to the
+// all-time change since the $1000 baseline for "Tümü" (range=0) and while a
+// newly-selected range's boundary data hasn't loaded yet.
+function computeRangePnl(key, currentValue) {
+  if (currentRangeDays === 0 || RANGE_PNL_CACHE.days !== currentRangeDays || RANGE_PNL_CACHE.price == null) {
+    const amount = currentValue - PORTFOLIO_START;
+    return { amount, pct: (amount / PORTFOLIO_START) * 100 };
+  }
+  const boundary = RANGE_PNL_CACHE.boundaries[key];
+  const startValue = boundary.cash + boundary.xrp * RANGE_PNL_CACHE.price;
+  const amount = currentValue - startValue;
+  return { amount, pct: startValue > 0 ? (amount / startValue) * 100 : 0 };
+}
+
+function formatPnl(pnl) {
+  const value = showPnlInDollars ? pnl.amount : pnl.pct;
+  const sign = value >= 0 ? "+" : "-";
+  const magnitude = Math.abs(value).toFixed(2);
+  return showPnlInDollars ? `${sign}$${magnitude}` : `${sign}${magnitude}%`;
 }
 
 function fmtTime(iso) {
@@ -230,6 +304,20 @@ function setupHistoryToggles() {
   });
 }
 
+// Clicking any panel's return badge flips ALL of them between % and $ at
+// once, so the panels stay comparable in the same unit.
+function setupPnlToggle() {
+  const container = document.getElementById("strategy-panels");
+  if (!container) return;
+  container.addEventListener("click", (e) => {
+    if (!e.target.closest(".strategy-portfolio .direction")) return;
+    showPnlInDollars = !showPnlInDollars;
+    if (lastLivePrice != null) {
+      safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+    }
+  });
+}
+
 function renderStrategyTradesTable(panel, trades) {
   const tbody = panel.querySelector(".strategy-trades-table tbody");
   if (!trades || trades.length === 0) {
@@ -322,16 +410,19 @@ function renderStrategyPanels(predictions, ensembleState, strategyStates, livePr
     }
     panel.querySelector(".strategy-acc-summary").textContent = acc ? `${acc.total} tahminden ${acc.correct} doğru (%${acc.pct})` : "Bu aralıkta veri yok";
 
-    // Portfolio value/return
+    // Portfolio value/return -- the badge shows the selected range's
+    // profit/loss (see computeRangePnl) and toggles between % and $ on click
+    // (see setupPnlToggle).
     if (state) {
       const cash = Number(state.cash_usd);
       const xrp = Number(state.xrp_amount);
       const value = cash + xrp * livePrice;
-      const retPct = ((value - PORTFOLIO_START) / PORTFOLIO_START) * 100;
+      const pnl = computeRangePnl(key, value);
       panel.querySelector(".strategy-portfolio .value").textContent = `$${value.toFixed(2)}`;
       const retEl = panel.querySelector(".strategy-portfolio .direction");
-      retEl.textContent = `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`;
-      retEl.className = `direction ${retPct >= 0 ? "up" : "down"}`;
+      retEl.textContent = formatPnl(pnl);
+      retEl.className = `direction ${pnl.amount >= 0 ? "up" : "down"}`;
+      retEl.title = "Dolar/yüzde görünümü için tıkla";
       panel.querySelector(".strategy-cash-xrp").textContent = `Nakit $${cash.toFixed(2)} · ${xrp.toFixed(4)} XRP`;
     }
 
@@ -343,12 +434,22 @@ function renderStrategyPanels(predictions, ensembleState, strategyStates, livePr
 
 function setupRangeButtons() {
   const container = document.getElementById("range-buttons");
-  container.addEventListener("click", (e) => {
+  container.addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-range]");
     if (!btn) return;
     container.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     currentRangeDays = Number(btn.dataset.range);
+    // "Tümü" doesn't need boundary data (falls back to the $1000 baseline in
+    // computeRangePnl); the other ranges fetch fresh boundary holdings/price.
+    if (currentRangeDays !== 0) {
+      try {
+        await loadRangePnlBoundary(currentRangeDays);
+      } catch (err) {
+        console.error("Range PnL boundary fetch failed:", err);
+        RANGE_PNL_CACHE.days = null; // render() falls back to the all-time baseline
+      }
+    }
     if (lastLivePrice != null) {
       safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
     }
@@ -451,8 +552,20 @@ const PREDICTIONS_REFRESH_MS = 30000;
 async function init() {
   setupRangeButtons();
   setupHistoryToggles();
+  setupPnlToggle();
   startClock();
   startLivePricePolling();
+  // Kicks off in parallel with loadPredictions() below -- computeRangePnl()
+  // falls back to the all-time baseline until this resolves, so there's
+  // nothing broken to show meanwhile; re-render once it lands so the default
+  // 7-day range's real profit/loss replaces that fallback.
+  loadRangePnlBoundary(currentRangeDays)
+    .then(() => {
+      if (lastLivePrice != null) {
+        safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
+      }
+    })
+    .catch((err) => console.error("Range PnL boundary fetch failed:", err));
   await loadPredictions();
   setInterval(loadPredictions, PREDICTIONS_REFRESH_MS);
 }
