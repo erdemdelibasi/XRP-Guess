@@ -207,7 +207,19 @@ def main() -> int:
           f"orderbook={orderbook['direction']}/{orderbook['confidence']:.2f}, weights={weights}]")
 
     prediction_id = inserted.data[0]["id"] if inserted.data else None
-    trading.maybe_trade(db, prediction_id, final["direction"], final["confidence"], current_price)
+
+    # The ensemble portfolio plus four independent single-signal-only
+    # portfolios (technical-only, ml-only, whale-only, news-only) -- lets a
+    # signal's real paper-trading performance be compared against the
+    # blended ensemble instead of only ever being seen mixed together.
+    strategy_signals = {"technical": tech, "ml": ml, "whale": whale, "news": news}
+    for strategy_name in ("ensemble", *trading.STRATEGIES):
+        signal = final if strategy_name == "ensemble" else strategy_signals[strategy_name]
+        try:
+            trading.maybe_trade(db, strategy_name, prediction_id, signal["direction"], signal["confidence"], current_price)
+        except Exception as exc:  # noqa: BLE001 -- one strategy's DB hiccup must not block the others
+            print(f"WARNING: {strategy_name} portfolio update failed ({exc})")
+
     return 0
 
 

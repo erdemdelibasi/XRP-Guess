@@ -2,6 +2,7 @@ let allPredictions = [];
 let pieChart = null;
 let currentRangeDays = 7;
 let portfolioState = null;
+let strategyPortfolios = null;
 let lastLivePrice = null;
 
 function supabaseHeaders() {
@@ -24,6 +25,13 @@ async function fetchPortfolioState() {
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   const rows = await res.json();
   return rows[0] ?? null;
+}
+
+async function fetchStrategyPortfolios() {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/strategy_portfolios?select=*`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
 }
 
 async function fetchTrades(limit = 50) {
@@ -120,14 +128,37 @@ function renderAccuracy(predictions) {
   const latest = predictions[0];
   const weights = document.getElementById("weights-summary");
   if (latest && latest.weight_technical != null) {
-    const parts = [
-      `Teknik: %${Math.round(latest.weight_technical * 100)}`,
-      `ML: %${Math.round(latest.weight_ml * 100)}`,
-    ];
-    if (latest.weight_whale != null) parts.push(`Balina: %${Math.round(latest.weight_whale * 100)}`);
-    if (latest.weight_news != null) parts.push(`Haber: %${Math.round(latest.weight_news * 100)}`);
+    const labels = { technical: "Teknik", ml: "ML", whale: "Balina", news: "Haber", orderbook: "Emir Defteri" };
+    const raw = [
+      ["technical", latest.weight_technical],
+      ["ml", latest.weight_ml],
+      ["whale", latest.weight_whale],
+      ["news", latest.weight_news],
+      ["orderbook", latest.weight_orderbook],
+    ].filter(([, v]) => v != null);
+    const pct = roundWeightsTo100(raw);
+    const parts = raw.map(([key]) => `${labels[key]}: %${pct[key]}`);
     weights.textContent = `Güncel ağırlıklar — ${parts.join(", ")}`;
   }
+}
+
+// Rounds fractional weights to whole percentages that always sum to exactly
+// 100 (largest-remainder method) -- rounding each weight independently
+// (Math.round) can drift a point or two off 100 and reads as a bug.
+function roundWeightsTo100(entries) {
+  const withRemainders = entries.map(([label, frac]) => {
+    const scaled = frac * 100;
+    const floor = Math.floor(scaled);
+    return [label, floor, scaled - floor];
+  });
+  const usedTotal = withRemainders.reduce((sum, [, floor]) => sum + floor, 0);
+  const remainder = Math.round(100 - usedTotal);
+  const byRemainderDesc = [...withRemainders].sort((a, b) => b[2] - a[2]);
+  const pct = Object.fromEntries(withRemainders.map(([label, floor]) => [label, floor]));
+  for (let i = 0; i < remainder && i < byRemainderDesc.length; i++) {
+    pct[byRemainderDesc[i][0]] += 1;
+  }
+  return pct;
 }
 
 function renderHistory(predictions) {
@@ -172,6 +203,48 @@ function renderPortfolio(state, livePrice) {
 
   document.getElementById("portfolio-cash").textContent = `$${cash.toFixed(2)}`;
   document.getElementById("portfolio-xrp").textContent = `${xrp.toFixed(4)} XRP`;
+}
+
+const STRATEGY_LABELS = { ensemble: "Ensemble (ana model)", technical: "Sadece Teknik", ml: "Sadece ML", whale: "Sadece Balina", news: "Sadece Haber" };
+
+function computeStrategyAccuracy(predictions, correctField) {
+  const resolved = predictions.filter((p) => p[correctField] != null);
+  if (resolved.length === 0) return null;
+  const correct = resolved.filter((p) => p[correctField]).length;
+  return { correct, total: resolved.length, pct: Math.round((correct / resolved.length) * 100) };
+}
+
+function renderStrategyComparison(predictions, ensembleState, strategyStates, livePrice) {
+  const tbody = document.querySelector("#strategy-comparison-table tbody");
+  if (!tbody || livePrice == null) return;
+  tbody.innerHTML = "";
+
+  const byStrategy = Object.fromEntries((strategyStates ?? []).map((s) => [s.strategy, s]));
+  const rows = [
+    { key: "ensemble", state: ensembleState, correctField: "correct" },
+    { key: "technical", state: byStrategy.technical, correctField: "tech_correct" },
+    { key: "ml", state: byStrategy.ml, correctField: "ml_correct" },
+    { key: "whale", state: byStrategy.whale, correctField: "whale_correct" },
+    { key: "news", state: byStrategy.news, correctField: "news_correct" },
+  ];
+
+  for (const row of rows) {
+    if (!row.state) continue;
+    const cash = Number(row.state.cash_usd);
+    const xrp = Number(row.state.xrp_amount);
+    const value = cash + xrp * livePrice;
+    const retPct = ((value - PORTFOLIO_START) / PORTFOLIO_START) * 100;
+    const acc = computeStrategyAccuracy(predictions, row.correctField);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${STRATEGY_LABELS[row.key]}</td>
+      <td>$${value.toFixed(2)}</td>
+      <td class="${retPct >= 0 ? "up" : "down"}">${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%</td>
+      <td>${acc ? `%${acc.pct} (${acc.correct}/${acc.total})` : "-"}</td>
+    `;
+    tbody.appendChild(tr);
+  }
 }
 
 function renderTrades(trades) {
@@ -245,6 +318,9 @@ async function updateLivePrice() {
     lastLivePrice = Number(data.price);
     document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
     if (portfolioState) safeRender(renderPortfolio, portfolioState, lastLivePrice);
+    if (portfolioState || strategyPortfolios) {
+      safeRender(renderStrategyComparison, allPredictions, portfolioState, strategyPortfolios, lastLivePrice);
+    }
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -290,6 +366,15 @@ async function loadPredictions() {
     safeRender(renderTrades, trades);
   } catch (err) {
     console.error("Trades fetch failed:", err);
+  }
+
+  try {
+    strategyPortfolios = await fetchStrategyPortfolios();
+    if (lastLivePrice != null) {
+      safeRender(renderStrategyComparison, allPredictions, portfolioState, strategyPortfolios, lastLivePrice);
+    }
+  } catch (err) {
+    console.error("Strategy portfolios fetch failed:", err);
   }
 }
 

@@ -79,7 +79,13 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   geçmiş arşivi yok, bu yüzden `backend/backtest.py` sadece technical+ML'i
   test edebilir**, bu sınırlama backtest raporunda açıkça belirtilir.
   Ağırlıklar `retrain.py` tarafından günlük olarak son 14 günlük başarı
-  oranına göre güncellenir (`model_state` tablosu). `ensemble.recompute_weights`
+  oranına göre güncellenir (`model_state` tablosu) ve ham haliyle **her
+  zaman** tam %100'e tamamlanır (float toplamı) — ekranda %100 etmiyormuş
+  gibi görünüyorsa veri değil gösterim sorunudur: `app.js`'de her ağırlık
+  bağımsız `Math.round`'lanıyordu, hem bu yüzden ~1 puan kayabiliyordu hem
+  de `orderbook` gösterime hiç dahil değildi. `roundWeightsTo100()`
+  (en-büyük-kalan yöntemi) ve `orderbook`'un eklenmesiyle düzeltildi.
+  `ensemble.recompute_weights`
   her bileşeni **bağımsız** olarak günceller — bir bileşenin (ör. news)
   henüz yeterli geçmişi yoksa sadece o bileşen varsayılan ağırlıkta kalır,
   diğerlerinin kendi aralarında ayarlanmasını engellemez. `whale`/`news`/
@@ -136,6 +142,32 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   fiyatını da `predictions` tablosundaki en yakın çözülmüş tahminin
   `price_at_resolution`'ından yeniden inşa eder. Gmail App Password ile
   `smtplib` üzerinden gönderir (ek pip bağımlılığı yok).
+
+- **Beş bağımsız $1000 kağıt-portföy** (`trading.py`): orijinal ensemble
+  portföyü (`portfolio_state`/`trades`, id=1, hiç değişmedi) artı dört
+  tekil-sinyal stratejisi — sadece teknik, sadece ML, sadece balina, sadece
+  haber (`strategy_portfolios`/`strategy_trades`, `strategy` kolonuyla
+  anahtarlı; `orderbook`'un kendi stratejisi yok, kullanıcı sadece bu
+  dördünü istedi). Hepsi **aynı** `compute_rebalance()`/`maybe_trade()`
+  mantığından geçiyor — `maybe_trade(db, strategy, ...)` sadece hangi
+  tabloya okuyup/yazacağını seçiyor, karar mantığı tekrarlanmıyor.
+  `predict.py` her 15 dakikada 5 kez `maybe_trade()` çağırır (biri
+  başarısız olursa diğerlerini engellemez). `technical`/`ml` stratejileri
+  zaten kalibre edilmiş güveni kullanır (calibration.py önce çalışır).
+  **Geçmişe dönük başlangıç**: `backend/backfill_strategy_portfolios.py`
+  (yeni `Backfill Strategy Portfolios` workflow'u, `workflow_dispatch`,
+  cron yok) `predictions` tablosundaki tüm geçmiş satırları kronolojik
+  sırayla `compute_rebalance()`'tan geçirip 4 stratejiyi sıfır yerine
+  "gerçekte ne yapmış olacaklardı" durumuyla başlatır — idempotent (o
+  stratejinin `strategy_trades` kayıtlarını silip yeniden yazar), tekrar
+  çalıştırmak güvenli. **Sıralama önemli**: şema migration'ı önce
+  uygulanmalı, `predict.py` canlı işlem yapmaya başlamadan önce (ya da
+  hemen sonra — idempotent olduğu için kritik değil) backfill workflow'u
+  manuel tetiklenmeli, yoksa backfill canlı birkaç işlemin üzerine yazar
+  (zararsız ama gereksiz). Frontend'de "Strateji Karşılaştırması" kartı
+  (`app.js:renderStrategyComparison`) 5'ini yan yana gösterir; isabet oranı
+  `predictions.{prefix}_correct` kolonlarından, değer `strategy_portfolios`
+  + canlı fiyattan hesaplanır.
 
 ## Geliştirme notları
 

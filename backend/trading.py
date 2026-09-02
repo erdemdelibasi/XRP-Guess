@@ -30,12 +30,27 @@ cooldown cut stop-loss count ~14x and fee drag from ~73% to ~24% of capital
 
 compute_rebalance() is pure (no DB access) so backtest.py can replay the
 exact same sizing/stop-loss logic offline against historical data.
+
+Five independent $1000 paper portfolios run side by side: the weighted
+ensemble (the original one, `portfolio_state`/`trades`, unchanged since it
+already had real trade history before this module supported more than one
+strategy) plus four single-signal strategies -- technical-only, ml-only,
+whale-only, news-only -- each trading purely on its own signal, in
+`strategy_portfolios`/`strategy_trades` (keyed by `strategy`). All five run
+through the exact same compute_rebalance()/maybe_trade() logic; only which
+table gets read/written differs. This lets a single signal's real paper
+performance be compared against the blended ensemble instead of only ever
+being seen mixed together. orderbook has no strategy of its own here (the
+user only asked for these four); `backfill_strategy_portfolios.py` seeds the
+four from historical `predictions` rows the first time this is deployed.
 """
 from datetime import datetime, timezone
 
 FEE_RATE = 0.001
 MIN_CONFIDENCE_TO_TRADE = 0.02
 STARTING_CASH = 1000.0
+
+STRATEGIES = ("technical", "ml", "whale", "news")  # the four single-signal portfolios; "ensemble" is the original, separate table
 
 MAX_ALLOCATION = 0.85                  # a single signal never commits more than 85% of the portfolio to XRP
 CONFIDENCE_FOR_MAX_ALLOCATION = 0.25   # confidence level that maps to MAX_ALLOCATION (typical confidences run ~0.05-0.20)
@@ -47,15 +62,34 @@ STOP_LOSS_COOLDOWN_CANDLES = 40        # ~10h at 15-min candles -- no re-entry f
                                         # (see module docstring: without this, re-entry gets stopped out again almost every time)
 
 
-def get_portfolio_state(db) -> dict:
-    res = db.table("portfolio_state").select("*").eq("id", 1).single().execute()
+def _state_table(strategy: str) -> str:
+    return "portfolio_state" if strategy == "ensemble" else "strategy_portfolios"
+
+
+def _filter_own_row(query, strategy: str):
+    """Applies the "just this strategy's one row" filter to an already-built
+    select()/update() query -- portfolio_state (ensemble) is keyed by a fixed
+    id=1, strategy_portfolios (the other four) by the `strategy` column.
+    (Must be called after select()/update(), not on the bare table() query --
+    postgrest-py's table() builder doesn't expose .eq() until then.)"""
+    return query.eq("id", 1) if strategy == "ensemble" else query.eq("strategy", strategy)
+
+
+def get_portfolio_state(db, strategy: str = "ensemble") -> dict:
+    query = db.table(_state_table(strategy)).select("*")
+    res = _filter_own_row(query, strategy).single().execute()
     return res.data
 
 
-def _record_trade(db, side: str, price: float, xrp_amount: float, usd_amount: float,
+def _update_state(db, strategy: str, fields: dict) -> None:
+    query = db.table(_state_table(strategy)).update(fields)
+    _filter_own_row(query, strategy).execute()
+
+
+def _record_trade(db, strategy: str, side: str, price: float, xrp_amount: float, usd_amount: float,
                    fee_usd: float, cash_after: float, xrp_after: float,
                    prediction_id: int | None, reason: str) -> None:
-    db.table("trades").insert({
+    row = {
         "side": side,
         "price": price,
         "xrp_amount": xrp_amount,
@@ -65,7 +99,12 @@ def _record_trade(db, side: str, price: float, xrp_amount: float, usd_amount: fl
         "xrp_after": xrp_after,
         "triggered_by_prediction_id": prediction_id,
         "reason": reason,
-    }).execute()
+    }
+    table = "trades"
+    if strategy != "ensemble":
+        table = "strategy_trades"
+        row["strategy"] = strategy
+    db.table(table).insert(row).execute()
 
 
 def _target_allocation(direction: str, confidence: float) -> float:
@@ -137,10 +176,12 @@ def compute_rebalance(cash: float, xrp: float, price: float, direction: str,
             "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": ""}
 
 
-def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float, price: float) -> None:
-    """Fetches live portfolio state, decides via compute_rebalance(), and
-    applies the result (DB writes + trade log)."""
-    state = get_portfolio_state(db)
+def maybe_trade(db, strategy: str, prediction_id: int | None, direction: str, confidence: float, price: float) -> None:
+    """Fetches `strategy`'s portfolio state, decides via compute_rebalance(),
+    and applies the result (DB writes + trade log). `strategy` is "ensemble"
+    (the original portfolio_state/trades tables) or one of trading.STRATEGIES
+    (strategy_portfolios/strategy_trades)."""
+    state = get_portfolio_state(db, strategy)
     cash, xrp = float(state["cash_usd"]), float(state["xrp_amount"])
     peak_value = float(state.get("peak_value") or STARTING_CASH)
     cooldown_remaining = int(state.get("stop_loss_cooldown") or 0)
@@ -150,11 +191,11 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
 
     if decision["action"] == "HOLD":
         if decision["new_peak_value"] != peak_value or decision["new_cooldown_remaining"] != cooldown_remaining:
-            db.table("portfolio_state").update({
+            _update_state(db, strategy, {
                 "peak_value": decision["new_peak_value"],
                 "stop_loss_cooldown": decision["new_cooldown_remaining"],
                 "updated_at": now_iso,
-            }).eq("id", 1).execute()
+            })
         return
 
     if decision["action"] == "BUY":
@@ -164,15 +205,15 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
         new_cash = cash - gross_usd
         new_xrp = xrp + xrp_bought
 
-        db.table("portfolio_state").update({
+        _update_state(db, strategy, {
             "cash_usd": new_cash, "xrp_amount": new_xrp, "position": "LONG",
             "peak_value": decision["new_peak_value"],
             "stop_loss_cooldown": decision["new_cooldown_remaining"],
             "updated_at": now_iso,
-        }).eq("id", 1).execute()
-        _record_trade(db, "BUY", price, xrp_bought, gross_usd, fee_usd, new_cash, new_xrp,
+        })
+        _record_trade(db, strategy, "BUY", price, xrp_bought, gross_usd, fee_usd, new_cash, new_xrp,
                        prediction_id, decision["reason"])
-        print(f"TRADE: BUY {xrp_bought:.4f} XRP @ {price:.4f} (fee ${fee_usd:.2f}) -- {decision['reason']}")
+        print(f"TRADE [{strategy}]: BUY {xrp_bought:.4f} XRP @ {price:.4f} (fee ${fee_usd:.2f}) -- {decision['reason']}")
 
     elif decision["action"] == "SELL":
         xrp_to_sell = decision["xrp_amount"]
@@ -181,13 +222,13 @@ def maybe_trade(db, prediction_id: int | None, direction: str, confidence: float
         new_cash = cash + (gross_usd - fee_usd)
         new_xrp = xrp - xrp_to_sell
 
-        db.table("portfolio_state").update({
+        _update_state(db, strategy, {
             "cash_usd": new_cash, "xrp_amount": new_xrp,
             "position": "LONG" if new_xrp > 0 else "CASH",
             "peak_value": decision["new_peak_value"],
             "stop_loss_cooldown": decision["new_cooldown_remaining"],
             "updated_at": now_iso,
-        }).eq("id", 1).execute()
-        _record_trade(db, "SELL", price, xrp_to_sell, gross_usd, fee_usd, new_cash, new_xrp,
+        })
+        _record_trade(db, strategy, "SELL", price, xrp_to_sell, gross_usd, fee_usd, new_cash, new_xrp,
                        prediction_id, decision["reason"])
-        print(f"TRADE: SELL {xrp_to_sell:.4f} XRP @ {price:.4f} (fee ${fee_usd:.2f}) -- {decision['reason']}")
+        print(f"TRADE [{strategy}]: SELL {xrp_to_sell:.4f} XRP @ {price:.4f} (fee ${fee_usd:.2f}) -- {decision['reason']}")
