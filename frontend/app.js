@@ -121,12 +121,23 @@ const PORTFOLIO_START = 1000;
 // blended call); the other four read that component's own dedicated
 // columns (already logged on every prediction row regardless of which
 // portfolio ends up using them).
+//
+// `abstains: true` marks components whose direction field is a meaningless
+// placeholder when confidence is 0 (whale/news return a fixed "UP" via
+// their NEUTRAL constant when they truly have no opinion -- see
+// whale_signal.py/news_signal.py) -- confidence===0 should hide the
+// direction there. technical/ml never do this: their direction is always a
+// real, already-scored model output even when calibration.py has pushed
+// its confidence down to (or to exactly) 0 because the raw signal doesn't
+// correlate with real accuracy -- confidence 0 there means "don't trust it
+// enough to trade," not "no prediction was made," so their history/current
+// line should keep showing the real direction and result.
 const STRATEGY_CONFIG = {
   ensemble: { label: "Ensemble (ana model)", dirField: "predicted_direction", confField: "confidence", pctField: "predicted_pct_change", priceField: "predicted_price", correctField: "correct" },
   technical: { label: "Sadece Teknik", dirField: "tech_direction", confField: "tech_confidence", pctField: "tech_pct_change", priceField: "tech_price", correctField: "tech_correct" },
   ml: { label: "Sadece ML", dirField: "ml_direction", confField: "ml_confidence", pctField: "ml_pct_change", priceField: "ml_price", correctField: "ml_correct" },
-  whale: { label: "Sadece Balina", dirField: "whale_direction", confField: "whale_confidence", pctField: "whale_pct_change", priceField: "whale_price", correctField: "whale_correct" },
-  news: { label: "Sadece Haber", dirField: "news_direction", confField: "news_confidence", pctField: "news_pct_change", priceField: "news_price", correctField: "news_correct" },
+  whale: { label: "Sadece Balina", dirField: "whale_direction", confField: "whale_confidence", pctField: "whale_pct_change", priceField: "whale_price", correctField: "whale_correct", abstains: true },
+  news: { label: "Sadece Haber", dirField: "news_direction", confField: "news_confidence", pctField: "news_pct_change", priceField: "news_price", correctField: "news_correct", abstains: true },
 };
 
 const strategyPieCharts = {};
@@ -242,7 +253,7 @@ function renderStrategyHistoryTable(panel, predictions, cfg) {
   tbody.innerHTML = rows.map((p) => {
     const dir = p[cfg.dirField];
     const conf = p[cfg.confField];
-    if (dir == null || (conf != null && conf === 0)) {
+    if (dir == null || (cfg.abstains && conf === 0)) {
       return `<tr><td>${p.target_time ? fmtTime(p.target_time) : "-"}</td><td class="muted" colspan="2">Sessiz</td></tr>`;
     }
     const correct = p[cfg.correctField];
@@ -275,7 +286,7 @@ function renderStrategyPanels(predictions, ensembleState, strategyStates, livePr
     const dir = latest[cfg.dirField];
     const conf = latest[cfg.confField];
     const predEl = panel.querySelector(".strategy-prediction");
-    if (dir == null || conf == null || conf === 0) {
+    if (dir == null || conf == null || (cfg.abstains && conf === 0)) {
       predEl.textContent = "Sessiz (sinyal yok)";
     } else {
       const arrow = dir === "UP" ? "▲" : "▼";
