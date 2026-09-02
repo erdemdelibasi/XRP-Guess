@@ -376,7 +376,7 @@ tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
 .stance-down { background: var(--down-soft); color: var(--down); }
 .stance-neutral { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
 
-.kanal-finans-portfolio-title {
+.kanal-finans-divider {
   margin-top: 16px !important;
   padding-top: 14px;
   border-top: 1px solid var(--border);
