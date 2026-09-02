@@ -51,11 +51,13 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
    - `ANTHROPIC_API_KEY` adıyla GitHub Secrets'a ekle.
    - Bu secret'ı eklemezsen sistem çökmez — Claude bileşeni sadece sürekli
      "sessiz" (nötr) kalır, diğer beş sinyal normal çalışmaya devam eder.
-   - Yaklaşık maliyet: günde 96 çağrı (15 dakikada bir) × Claude Haiku 4.5
-     (en ucuz model, maliyeti düşük tutmak için bilinçli seçildi), her çağrı
-     küçük bir metin (birkaç yüz token) olduğu için ayda ~$2-3 civarı —
-     sıfır değil ama ihmal edilebilir. Diğer beş sinyal tamamen ücretsiz
-     kaldığı için bu, projedeki tek ücretli bileşen.
+   - Yaklaşık maliyet: günde 96 çağrı (15 dakikada bir) × Claude Sonnet 5,
+     her çağrı küçük bir metin (birkaç yüz token) olduğu için ayda ~$5-6
+     civarı — sıfır değil ama ihmal edilebilir. Diğer beş sinyal tamamen
+     ücretsiz kaldığı için bu, projedeki tek ücretli bileşen. (Daha ucuzu
+     için `backend/claude_signal.py`'deki `MODEL`'i `claude-haiku-4-5`
+     yapıp `output_config`'ten `effort` alanını kaldırman yeterli — o
+     modelde bu parametre desteklenmiyor.)
 
    Günlük özet e-postası istiyorsan (bkz. aşağıda "Nasıl çalışıyor") şu
    üçünü de ekle:
@@ -145,8 +147,7 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   - **Claude** (`claude_signal.py`): teknik sinyalin ve balina akışının o
     anki ham değerleriyle, o sıradaki gerçek XRP/Ripple haber başlıklarının
     metnini (haber sinyalinin anahtar-kelime skoru değil, başlıkların
-    kendisi) Anthropic API'sine (Claude Haiku 4.5 — maliyeti düşük tutmak
-    için en ucuz model bilinçli seçildi) gönderip bağımsız bir
+    kendisi) Anthropic API'sine (Claude Sonnet 5) gönderip bağımsız bir
     yön/güven değerlendirmesi ister. Projedeki **tek ücretli** bileşen —
     kendi `ANTHROPIC_API_KEY`'in yoksa (bkz. yukarıda kurulum) sürekli
     sessiz kalır, sistemin geri kalanını etkilemez. Diğer canlı-only
