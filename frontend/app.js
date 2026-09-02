@@ -60,6 +60,15 @@ async function fetchTrades(limit = 10) {
   return res.json();
 }
 
+// Kanal Finans TS (YouTube @KanalFinans) mentions -- an independent opinion
+// feed, not an ensemble component (see backend/kanal_finans.py, CLAUDE.md).
+async function fetchKanalFinansMentions(limit = 20) {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/kanal_finans_mentions?select=*&order=published_at.desc&limit=${limit}`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
+}
+
 // Holdings as of the last trade at-or-before `boundaryIso` -- the starting
 // point for computing that strategy's profit/loss over the selected range.
 // No matching row means the strategy hadn't traded yet by then, i.e. it was
@@ -362,6 +371,33 @@ function renderStrategyHistoryTable(panel, predictions, cfg) {
   }).join("");
 }
 
+// Ensemble uses English "UP"/"DOWN" labels for its own predictions -- these
+// Turkish labels are deliberately different text (same --up/--down colors,
+// see style.css) so a Kanal Finans stance badge never reads as if it were
+// our model's own prediction.
+const KANAL_FINANS_STANCE_LABELS = { UP: "Olumlu", DOWN: "Olumsuz", NEUTRAL: "Nötr" };
+const KANAL_FINANS_STANCE_CLASSES = { UP: "up", DOWN: "down", NEUTRAL: "neutral" };
+
+function renderKanalFinans(mentions) {
+  const container = document.getElementById("kanal-finans-feed");
+  if (!mentions || mentions.length === 0) {
+    container.innerHTML = '<p class="muted small center">Henüz veri yok</p>';
+    return;
+  }
+  container.innerHTML = mentions.map((m) => `
+    <div class="kanal-finans-item">
+      <div class="kanal-finans-meta">
+        <span class="muted small">${fmtTime(m.published_at)}</span>
+        <a href="https://youtu.be/${m.video_id}" target="_blank" rel="noopener">${m.video_title || "Video"}</a>
+      </div>
+      <div class="kanal-finans-body">
+        <span class="asset-badge">${m.asset}</span>
+        <span class="kanal-finans-summary">${m.summary}</span>
+        <span class="stance stance-${KANAL_FINANS_STANCE_CLASSES[m.stance] || "neutral"}">${KANAL_FINANS_STANCE_LABELS[m.stance] || m.stance}</span>
+      </div>
+    </div>`).join("");
+}
+
 function renderStrategyPanels(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
   if (livePrice == null || predictions.length === 0) return;
   buildStrategyPanelsShell();
@@ -538,6 +574,13 @@ async function loadPredictions() {
     SINGLE_SIGNAL_STRATEGIES.forEach((s, i) => { tradesByStrategy[s] = perStrategyTrades[i]; });
   } catch (err) {
     console.error("Strategy portfolios/trades fetch failed:", err);
+  }
+
+  try {
+    const mentions = await fetchKanalFinansMentions();
+    safeRender(renderKanalFinans, mentions);
+  } catch (err) {
+    console.error("Kanal Finans fetch failed:", err);
   }
 
   if (lastLivePrice != null) {

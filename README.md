@@ -206,6 +206,16 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
   `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
   hesaplanır — ayrı bir "günlük anlık görüntü" tablosu tutulmaz.
+- Günde 4 kez (`kanal_finans.yml`) YouTube'daki **Kanal Finans** (Tunç
+  Şatıroğlu) kanalı yeni video için kontrol edilir. Yeni bir video varsa
+  Türkçe transkripti çekilip Claude'a verilir; Claude XRP/BTC/ETH/genel
+  kripto hakkında söylenenleri **kendi görüşünü katmadan** kısa (tek
+  cümlelik) özetler halinde çıkarır. Bu tamamen **ayrı ve bağımsız bir
+  bilgi akışıdır** — yukarıdaki altı sinyalden hiçbirine karışmaz, kendi
+  tahmini/skoru yoktur, panelde ayrı bir kart olarak (video linki, hangi
+  varlıktan bahsedildiği, kısa özet ve Tunç Şatıroğlu'nun o anki tonu —
+  olumlu/olumsuz/nötr) gösterilir. Video kripto konusuna hiç değinmiyorsa
+  hiçbir satır üretilmez.
 
 ## Sınırlamalar
 - Kripto fiyat tahmini doğası gereği belirsizdir; "kanıtlanmış" garanti bir

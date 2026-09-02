@@ -11,6 +11,7 @@ GitHub Actions (cron, sunucusuz zamanlayıcı)
   -> backend/predict.py       her 15 dk (:01/:16/:31/:46) çalışır
   -> backend/retrain.py       her gün 03:30 UTC çalışır
   -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC) çalışır, Gmail SMTP ile mail atar
+  -> backend/kanal_finans.py  günde 4 kez çalışır, ensemble'dan bağımsız
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -256,6 +257,39 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   pollinginde tekrarlanmaz (`RANGE_PNL_CACHE`, `days` alanı seçili
   aralıkla eşleşmiyorsa/henüz yüklenmediyse sessizce sabit-$1000 tabana
   düşer — kırık bir şey göstermek yerine).
+
+- **Kanal Finans TŞ** (`backend/kanal_finans.py`, YouTube @KanalFinans /
+  Tunç Şatıroğlu): kullanıcının takip ettiği bir piyasa YouTube kanalının
+  günlük videolarında XRP/BTC/ETH/kripto hakkında söylediklerini Claude ile
+  çıkarıp ayrı bir bilgi akışı olarak gösterir. **`ensemble.COMPONENTS`'e
+  eklenmedi ve `predict.py` bu modülü hiç çağırmıyor** — burada bir tahmin
+  üretmiyoruz, sadece Tunç Şatıroğlu'nun ne dediğini raporluyoruz; bu yüzden
+  kendi ayrı workflow'unda (`kanal_finans.yml`, günde 4 kez: 08:12/14:12/
+  18:12/23:12 TRT — `predict.py`'nin :01/:16/:31/:46 dakikalarıyla
+  çakışmasın diye :12) çalışır. Kanal, RSS ile key'siz takip edilir
+  (`https://www.youtube.com/feeds/videos.xml?channel_id=UCGBytjbMXiF1nbe6HD7iORQ`
+  — channel_id kanalın `canonical` linkinden bir kere çözülüp sabitlendi,
+  handle değişse bile ID sabit kalır). Transkript `youtube-transcript-api`
+  ile de key'siz çekiliyor, ama **bu kütüphane bulut runner IP'lerinden
+  zaman zaman engelleniyor** — tam olarak bu projede `api.binance.com` için
+  zaten yaşanan aynı sınıf risk (bkz. yukarıdaki Binance notu), burada ise
+  alternatif bir "vision" host'u yok. Bu yüzden bir video ancak transkript
+  **ve** Claude çıkarımı ikisi de başarıyla tamamlandıktan sonra
+  `kanal_finans_videos`'a yazılır (kripto bahsi hiç yoksa bile 0 mention'lı
+  "işlendi" satırı normaldir); herhangi bir adım başarısız olursa video hiç
+  yazılmaz ve bir sonraki koşuda (muhtemelen farklı bir runner IP'siyle)
+  otomatik tekrar denenir — elle bir retry/backoff mantığı yok, sadece
+  "işlenmemiş" kalmasına güveniliyor. Claude'a (`claude-sonnet-5`, aynı
+  `claude_signal.py` modeli) **kendi görüşünü değil, konuşmacının
+  söylediğini sadakatle özetlemesi** açıkça söyleniyor (`SYSTEM_PROMPT`) —
+  `stance` (UP/DOWN/NEUTRAL) Tunç Şatıroğlu'nun tonunu yansıtır, bizim
+  tahminimiz değildir; frontend'de bu netleştirilmek için ensemble'ın
+  İngilizce "UP"/"DOWN" etiketlerinden bilerek farklı, Türkçe "Olumlu/
+  Olumsuz/Nötr" rozetleri kullanılıyor (`app.js:KANAL_FINANS_STANCE_LABELS`)
+  — aynı `--up`/`--down` renk paleti, farklı metin. Maliyet günde birkaç
+  video × 1 Claude çağrısı — `claude_signal.py`'nin günde 96 çağrısının çok
+  altında, önemsiz. Backtest edilemez (canlı-only, geçmişe dönük ucuz bir
+  replay yolu yok — `claude_signal.py` ile aynı sınırlama).
 
 ## Geliştirme notları
 

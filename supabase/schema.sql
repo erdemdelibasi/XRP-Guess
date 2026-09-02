@@ -149,6 +149,35 @@ create table if not exists strategy_trades (
 
 create index if not exists strategy_trades_strategy_idx on strategy_trades (strategy, created_at desc);
 
+-- Kanal Finans TŞ (YouTube @KanalFinans, Tunc Satiroglu) gunluk piyasa
+-- videolarindan Claude ile cikarilan XRP/BTC/ETH/kripto bahisleri. Tamamen
+-- bagimsiz bir bilgi akisi -- ensemble.COMPONENTS'e dahil DEGIL, sadece bu
+-- kisinin videolarda ne soyledigini raporlar (bkz. CLAUDE.md). Bir video
+-- ancak transkript+Claude cikarimi basariyla tamamlandiktan sonra
+-- kanal_finans_videos'a yazilir (kripto bahsi hic yoksa bile, 0 mention'li
+-- "islendi" satiri normaldir); herhangi bir adim basarisiz olursa video hic
+-- yazilmaz ve bir sonraki cron kosusunda otomatik tekrar denenir.
+create table if not exists kanal_finans_videos (
+  video_id          text primary key,
+  video_title       text,
+  published_at      timestamptz,
+  processed_at      timestamptz not null default now(),
+  transcript_found  boolean not null default false
+);
+
+create table if not exists kanal_finans_mentions (
+  id            bigint generated always as identity primary key,
+  created_at    timestamptz not null default now(),
+  video_id      text not null references kanal_finans_videos (video_id),
+  video_title   text,
+  published_at  timestamptz,
+  asset         text not null check (asset in ('XRP', 'BTC', 'ETH', 'KRIPTO')),
+  summary       text not null,
+  stance        text not null check (stance in ('UP', 'DOWN', 'NEUTRAL'))
+);
+
+create index if not exists kanal_finans_mentions_published_idx on kanal_finans_mentions (published_at desc);
+
 -- Row Level Security: the frontend uses the public "anon" key and must only
 -- ever be able to read data. All writes come from the backend, which uses the
 -- service_role key (bypasses RLS) via GitHub Actions secrets.
@@ -158,6 +187,8 @@ alter table portfolio_state enable row level security;
 alter table trades enable row level security;
 alter table strategy_portfolios enable row level security;
 alter table strategy_trades enable row level security;
+alter table kanal_finans_videos enable row level security;
+alter table kanal_finans_mentions enable row level security;
 
 create policy "public read predictions" on predictions
   for select using (true);
@@ -175,4 +206,10 @@ create policy "public read strategy_portfolios" on strategy_portfolios
   for select using (true);
 
 create policy "public read strategy_trades" on strategy_trades
+  for select using (true);
+
+create policy "public read kanal_finans_videos" on kanal_finans_videos
+  for select using (true);
+
+create policy "public read kanal_finans_mentions" on kanal_finans_mentions
   for select using (true);
