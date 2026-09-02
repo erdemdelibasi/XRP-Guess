@@ -195,10 +195,14 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 - Panelde: güncel tahmin (hedef zaman, yüzde değişim, tahmini fiyat, teknik/ML
   kırılımı), doğru/yanlış pasta grafiği (24s/7g/30g/tümü filtreli), sanal
   portföyün canlı değeri ve işlem geçmişi, ve geçmiş tahmin tablosu gösterilir.
+  Kâr/zarar rozeti seçili tarih aralığının (24s/7g/30g/tümü) gerçek
+  getirisini gösterir ve tıklanınca tüm panellerde birlikte dolar ↔ yüzde
+  arasında geçiş yapar.
 - Her gün saat 18:10'da (Türkiye saati, `daily_report.yml`) son 24 saatin
   (dün 18:00 - bugün 18:00) özeti e-posta ile gönderilir: kaç tahmin
-  yapıldı/sonuçlandı/doğru çıktı, hangi bileşen (teknik/ML/balina/haber) o
-  gün en isabetliydi, sanal portföyün bakiyesi ve XRP fiyatı dünden bugüne
+  yapıldı/sonuçlandı/doğru çıktı, hangi bileşen (teknik/ML/balina/haber/emir
+  defteri/Claude) o gün en isabetliydi, sanal portföyün bakiyesi ve XRP
+  fiyatı dünden bugüne
   nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
   `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
   hesaplanır — ayrı bir "günlük anlık görüntü" tablosu tutulmaz.
