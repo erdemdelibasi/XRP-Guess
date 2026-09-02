@@ -73,6 +73,19 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
 
    Bunları eklemezsen sadece `Daily Email Report` workflow'u başarısız olur
    (Actions sekmesinde kırmızı görünür); tahmin/al-sat sistemini etkilemez.
+
+   Kanal Finans TŞ (bkz. aşağıda "Nasıl çalışıyor") için de iki secret daha
+   gerekir — **bunlar olmadan workflow "başarılı" görünse bile hiçbir video
+   işlenmez** (YouTube, GitHub Actions'ın bulut IP'sinden gelen transkript
+   isteklerini doğrudan engelliyor, canlıda doğrulandı):
+   - https://www.webshare.io adresinden bir hesap aç, **"Residential"**
+     proxy paketini satın al (Proxy Server veya Static Residential DEĞİL —
+     bunlar da IP-engeline takılıyor). Küçük bir plan yeterli, aylık birkaç
+     dolar civarı.
+   - https://dashboard.webshare.io/proxy/settings sayfasından "Proxy
+     Username" ve "Proxy Password" değerlerini al.
+   - `WEBSHARE_PROXY_USERNAME` ve `WEBSHARE_PROXY_PASSWORD` adlarıyla
+     GitHub Secrets'a ekle.
 3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
    üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
    çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak

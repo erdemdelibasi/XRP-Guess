@@ -270,11 +270,21 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   (`https://www.youtube.com/feeds/videos.xml?channel_id=UCGBytjbMXiF1nbe6HD7iORQ`
   — channel_id kanalın `canonical` linkinden bir kere çözülüp sabitlendi,
   handle değişse bile ID sabit kalır). Transkript `youtube-transcript-api`
-  ile de key'siz çekiliyor, ama **bu kütüphane bulut runner IP'lerinden
-  zaman zaman engelleniyor** — tam olarak bu projede `api.binance.com` için
-  zaten yaşanan aynı sınıf risk (bkz. yukarıdaki Binance notu), burada ise
-  alternatif bir "vision" host'u yok. Bu yüzden bir video ancak transkript
-  **ve** Claude çıkarımı ikisi de başarıyla tamamlandıktan sonra
+  ile de key'siz çekiliyor, ama **canlıda doğrulandı (2026-09-02): GitHub
+  Actions'ın Azure IP aralığından yapılan istekler YouTube tarafından
+  `RequestBlocked` ile sistematik olarak reddediliyor** — iki ayrı manuel
+  koşuda 15 videonun 15'i de aynı hatayla başarısız oldu. Bu, `api.binance.com`
+  için zaten yaşanan bulut-IP-engeli riskinden (bkz. yukarıdaki Binance notu)
+  daha ciddisi: orada alternatif bir "vision" host'u işe yaradı, burada ise
+  YouTube'un kendi hata mesajının önerdiği çözüm bir proxy — `_build_api()`
+  `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD` secret'ları set edilmişse
+  `youtube_transcript_api.proxies.WebshareProxyConfig` (rotating residential
+  proxy) üzerinden bağlanır, set değilse doğrudan bağlanır (yerelde,
+  bulut-olmayan bir IP'den çalıştırmak için). Bu iki secret olmadan
+  `kanal_finans.yml` hâlâ "başarıyla" tamamlanır ama hiçbir video işlenmez —
+  Actions'ta yeşil tik görüp "çalışıyor" sanma, gerçekten veri geldiğini
+  Supabase'den (`kanal_finans_videos`) doğrula. Bu yüzden bir video ancak
+  transkript **ve** Claude çıkarımı ikisi de başarıyla tamamlandıktan sonra
   `kanal_finans_videos`'a yazılır (kripto bahsi hiç yoksa bile 0 mention'lı
   "işlendi" satırı normaldir); herhangi bir adım başarısız olursa video hiç
   yazılmaz ve bir sonraki koşuda (muhtemelen farklı bir runner IP'siyle)

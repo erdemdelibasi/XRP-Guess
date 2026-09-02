@@ -29,6 +29,7 @@ import anthropic
 import requests
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import CouldNotRetrieveTranscript
+from youtube_transcript_api.proxies import WebshareProxyConfig
 
 import db as db_module
 
@@ -106,12 +107,27 @@ def get_processed_ids(db) -> set[str]:
     return {row["video_id"] for row in resp.data}
 
 
+def _build_api() -> YouTubeTranscriptApi:
+    # Confirmed live (2026-09-02, two separate runs, 15/15 videos each):
+    # GitHub Actions' Azure IP range gets a RequestBlocked from YouTube's
+    # transcript endpoint every time, not just occasionally -- see CLAUDE.md.
+    # Routing through a Webshare residential proxy is the fix the library
+    # itself recommends for exactly this. Falls back to a direct (unproxied)
+    # connection if the two secrets aren't set, so this still works when run
+    # locally from a non-cloud IP.
+    username = os.environ.get("WEBSHARE_PROXY_USERNAME")
+    password = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+    if username and password:
+        return YouTubeTranscriptApi(proxy_config=WebshareProxyConfig(username, password))
+    return YouTubeTranscriptApi()
+
+
 def fetch_transcript(video_id: str) -> str | None:
     """Turkish transcript text for a video, or None if unavailable/blocked.
     Tries manually-uploaded/auto-generated Turkish first (the channel is
     Turkish-language), then falls back to whatever transcript the video
     does have -- some videos only carry an auto-translated track."""
-    api = YouTubeTranscriptApi()
+    api = _build_api()
     try:
         fetched = api.fetch(video_id, languages=["tr", "tr-TR"])
     except CouldNotRetrieveTranscript as exc:
