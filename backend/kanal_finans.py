@@ -114,15 +114,18 @@ def fetch_transcript(video_id: str) -> str | None:
     api = YouTubeTranscriptApi()
     try:
         fetched = api.fetch(video_id, languages=["tr", "tr-TR"])
-    except CouldNotRetrieveTranscript:
+    except CouldNotRetrieveTranscript as exc:
+        print(f"kanal_finans: tr transcript fetch failed for {video_id} ({type(exc).__name__}: {exc})")
         try:
             transcript_list = api.list(video_id)
             fetched = next(iter(transcript_list)).fetch()
-        except (CouldNotRetrieveTranscript, StopIteration):
+        except (CouldNotRetrieveTranscript, StopIteration) as exc2:
+            print(f"kanal_finans: fallback transcript fetch also failed for {video_id} ({type(exc2).__name__}: {exc2})")
             return None
-    except Exception:
+    except Exception as exc:
         # Covers network-level failures (e.g. an IP-blocked cloud runner)
         # that aren't a CouldNotRetrieveTranscript subclass.
+        print(f"kanal_finans: transcript fetch network error for {video_id} ({type(exc).__name__}: {exc})")
         return None
 
     text = " ".join(snippet.text for snippet in fetched)
