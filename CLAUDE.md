@@ -11,7 +11,10 @@ GitHub Actions (cron, sunucusuz zamanlayıcı)
   -> backend/predict.py       her 15 dk (:01/:16/:31/:46) çalışır
   -> backend/retrain.py       her gün 03:30 UTC çalışır
   -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC) çalışır, Gmail SMTP ile mail atar
-  -> backend/kanal_finans.py  günde 4 kez çalışır, ensemble'dan bağımsız
+
+Kullanıcının kendi bilgisayarı (Windows Task Scheduler -- GitHub Actions DEĞİL,
+bkz. aşağıdaki Kanal Finans notu)
+  -> backend/run_kanal_finans.ps1 -> kanal_finans.py   günde 4 kez, ensemble'dan bağımsız
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -263,33 +266,43 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   günlük videolarında XRP/BTC/ETH/kripto hakkında söylediklerini Claude ile
   çıkarıp ayrı bir bilgi akışı olarak gösterir. **`ensemble.COMPONENTS`'e
   eklenmedi ve `predict.py` bu modülü hiç çağırmıyor** — burada bir tahmin
-  üretmiyoruz, sadece Tunç Şatıroğlu'nun ne dediğini raporluyoruz; bu yüzden
-  kendi ayrı workflow'unda (`kanal_finans.yml`, günde 4 kez: 08:12/14:12/
-  18:12/23:12 TRT — `predict.py`'nin :01/:16/:31/:46 dakikalarıyla
-  çakışmasın diye :12) çalışır. Kanal, RSS ile key'siz takip edilir
+  üretmiyoruz, sadece Tunç Şatıroğlu'nun ne dediğini raporluyoruz. Kanal, RSS
+  ile key'siz takip edilir
   (`https://www.youtube.com/feeds/videos.xml?channel_id=UCGBytjbMXiF1nbe6HD7iORQ`
   — channel_id kanalın `canonical` linkinden bir kere çözülüp sabitlendi,
-  handle değişse bile ID sabit kalır). Transkript `youtube-transcript-api`
-  ile de key'siz çekiliyor, ama **canlıda doğrulandı (2026-09-02): GitHub
-  Actions'ın Azure IP aralığından yapılan istekler YouTube tarafından
-  `RequestBlocked` ile sistematik olarak reddediliyor** — iki ayrı manuel
-  koşuda 15 videonun 15'i de aynı hatayla başarısız oldu. Bu, `api.binance.com`
-  için zaten yaşanan bulut-IP-engeli riskinden (bkz. yukarıdaki Binance notu)
-  daha ciddisi: orada alternatif bir "vision" host'u işe yaradı, burada ise
-  YouTube'un kendi hata mesajının önerdiği çözüm bir proxy — `_build_api()`
-  `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD` secret'ları set edilmişse
-  `youtube_transcript_api.proxies.WebshareProxyConfig` (rotating residential
-  proxy) üzerinden bağlanır, set değilse doğrudan bağlanır (yerelde,
-  bulut-olmayan bir IP'den çalıştırmak için). Bu iki secret olmadan
-  `kanal_finans.yml` hâlâ "başarıyla" tamamlanır ama hiçbir video işlenmez —
-  Actions'ta yeşil tik görüp "çalışıyor" sanma, gerçekten veri geldiğini
-  Supabase'den (`kanal_finans_videos`) doğrula. Bu yüzden bir video ancak
-  transkript **ve** Claude çıkarımı ikisi de başarıyla tamamlandıktan sonra
-  `kanal_finans_videos`'a yazılır (kripto bahsi hiç yoksa bile 0 mention'lı
-  "işlendi" satırı normaldir); herhangi bir adım başarısız olursa video hiç
-  yazılmaz ve bir sonraki koşuda (muhtemelen farklı bir runner IP'siyle)
-  otomatik tekrar denenir — elle bir retry/backoff mantığı yok, sadece
-  "işlenmemiş" kalmasına güveniliyor. Claude'a (`claude-sonnet-5`, aynı
+  handle değişse bile ID sabit kalır).
+
+  **Neden GitHub Actions'ta DEĞİL de kullanıcının kendi bilgisayarında
+  çalışıyor**: canlıda doğrulandı (2026-09-02) — GitHub Actions'ın Azure IP
+  aralığından yapılan transkript istekleri YouTube tarafından `RequestBlocked`
+  ile sistematik olarak reddediliyor (iki ayrı manuel koşuda 15 videonun 15'i
+  de aynı hatayla başarısız oldu). `api.binance.com` için yaşanan bulut-IP-
+  engeli riskinden (bkz. yukarıdaki Binance notu) daha ciddisi — orada
+  alternatif bir "vision" host'u işe yaradı, burada YouTube'un önerdiği
+  çözüm bir proxy (`_build_api()` hâlâ `WEBSHARE_PROXY_USERNAME`/
+  `WEBSHARE_PROXY_PASSWORD` set edilirse `WebshareProxyConfig` üzerinden
+  bağlanmayı destekliyor, ama kullanıcı webshare.io'ya kurumsal ağından
+  erişemediği için şimdilik kullanılmıyor). Kullanıcının kendi bilgisayarından
+  yapılan istekler engellenmiyor (yerelde doğrulandı) — bu yüzden
+  `kanal_finans.yml`'deki `schedule:` tetikleyicisi **bilerek kaldırıldı**
+  (sadece `workflow_dispatch` kaldı, elle test için), gerçek zamanlama
+  `backend/run_kanal_finans.ps1` + Windows Task Scheduler ile kullanıcının
+  makinesinde günde 4 kez (08:12/14:12/18:12/23:12 yerel saat) çalışıyor.
+  **Bu, projenin "sunucusuz" mimarisinden bilinçli bir sapma** — makine o
+  saatlerde kapalıysa/uykudaysa o çalıştırma atlanır, bir sonraki zamanlanmış
+  çalıştırmada `main()` zaten idempotent olduğu için otomatik telafi olur.
+  `run_kanal_finans.ps1`, `backend/.env`'i (gitignore'da, `.env.example`
+  şablonundan elle kopyalanır — GitHub Secrets'taki değerlerle aynı olmalı)
+  okuyup ortam değişkeni olarak yükler ve çıktıyı `backend/logs/`'a
+  (gitignore'da) tarihli bir dosyaya yazar. Webshare erişimi ileride
+  mümkün olursa `kanal_finans.yml`'e `schedule:` geri eklenip yerel görev
+  kapatılabilir — dosya bu geçiş için bilerek silinmedi.
+
+  Bir video ancak transkript **ve** Claude çıkarımı ikisi de başarıyla
+  tamamlandıktan sonra `kanal_finans_videos`'a yazılır (kripto bahsi hiç
+  yoksa bile 0 mention'lı "işlendi" satırı normaldir); herhangi bir adım
+  başarısız olursa video hiç yazılmaz ve bir sonraki zamanlanmış çalıştırmada
+  otomatik tekrar denenir. Claude'a (`claude-sonnet-5`, aynı
   `claude_signal.py` modeli) **kendi görüşünü değil, konuşmacının
   söylediğini sadakatle özetlemesi** açıkça söyleniyor (`SYSTEM_PROMPT`) —
   `stance` (UP/DOWN/NEUTRAL) Tunç Şatıroğlu'nun tonunu yansıtır, bizim

@@ -74,18 +74,15 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
    Bunları eklemezsen sadece `Daily Email Report` workflow'u başarısız olur
    (Actions sekmesinde kırmızı görünür); tahmin/al-sat sistemini etkilemez.
 
-   Kanal Finans TŞ (bkz. aşağıda "Nasıl çalışıyor") için de iki secret daha
-   gerekir — **bunlar olmadan workflow "başarılı" görünse bile hiçbir video
-   işlenmez** (YouTube, GitHub Actions'ın bulut IP'sinden gelen transkript
-   isteklerini doğrudan engelliyor, canlıda doğrulandı):
-   - https://www.webshare.io adresinden bir hesap aç, **"Residential"**
-     proxy paketini satın al (Proxy Server veya Static Residential DEĞİL —
-     bunlar da IP-engeline takılıyor). Küçük bir plan yeterli, aylık birkaç
-     dolar civarı.
-   - https://dashboard.webshare.io/proxy/settings sayfasından "Proxy
-     Username" ve "Proxy Password" değerlerini al.
-   - `WEBSHARE_PROXY_USERNAME` ve `WEBSHARE_PROXY_PASSWORD` adlarıyla
-     GitHub Secrets'a ekle.
+   Kanal Finans TŞ (bkz. aşağıda "Nasıl çalışıyor") **GitHub Actions'ta
+   çalışmıyor** — YouTube, GitHub Actions'ın bulut IP'sinden gelen transkript
+   isteklerini doğrudan engelliyor (canlıda doğrulandı). Bunun yerine kendi
+   bilgisayarından çalışır, kurulumu için "Kanal Finans TŞ'yi kendi
+   bilgisayarından çalıştırma" bölümüne bak. (Alternatif: bir proxy servisine
+   -- ör. webshare.io'da "Residential" paket -- erişimin varsa
+   `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD` secret'larını
+   ekleyip `kanal_finans.yml`'e `schedule:` tetikleyicisini geri koyarak
+   bunu GitHub Actions'a taşıyabilirsin.)
 3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
    üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
    çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak
@@ -124,6 +121,33 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
 1. Vercel adresini iPhone Safari'de aç, parolanı gir.
 2. Paylaş menüsü → **Ana Ekrana Ekle**.
 3. Artık ana ekrandan tam ekran bir uygulama gibi açılır.
+
+### 6. Kanal Finans TŞ'yi kendi bilgisayarından çalıştırma
+GitHub Actions'ta çalışmadığı için (yukarıda açıklandı) bu adım ayrı ve
+isteğe bağlı — atlarsan uygulamanın geri kalanı normal çalışmaya devam eder,
+sadece Kanal Finans paneli boş kalır.
+
+1. `backend/.env.example` dosyasını `backend/.env` olarak kopyala, içindeki
+   `SUPABASE_SERVICE_KEY` ve `ANTHROPIC_API_KEY` alanlarını GitHub
+   Secrets'a girdiğin **aynı** değerlerle doldur (`.env` gitignore'da,
+   asla commit'lenmez).
+2. `backend/.venv` yoksa oluştur ve bağımlılıkları kur (PowerShell'de):
+   ```powershell
+   cd backend
+   python -m venv .venv
+   .venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+3. Elle bir kez çalıştırıp doğrula: `.\run_kanal_finans.ps1` — `backend\logs\`
+   altında o günün log dosyasını oluşturmalı, hata yoksa Supabase'de
+   `kanal_finans_videos`/`kanal_finans_mentions` tablolarında yeni satırlar
+   görmelisin (kanalda gerçekten yeni video varsa).
+4. Windows Task Scheduler'da günde 4 kez (ör. 08:12/14:12/18:12/23:12) bu
+   scripti çalıştıracak bir görev oluştur: **Görev Zamanlayıcı** →
+   **Temel Görev Oluştur** → tetikleyici olarak günlük, aynı görevde 4 ayrı
+   saat ekle (veya 4 ayrı görev) → eylem olarak
+   `powershell.exe -ExecutionPolicy Bypass -File "<repo yolu>\backend\run_kanal_finans.ps1"`.
+   Bilgisayar o saatlerde kapalı/uykudaysa o çalıştırma atlanır — bir
+   sonraki çalıştırma otomatik telafi eder (script idempotent).
 
 ## Nasıl çalışıyor
 - Her 15 dakikada bir (`.github/workflows/predict.yml`, `:01/:16/:31/:46`)
@@ -219,7 +243,9 @@ Supabase'ten aldığın değerlerle doldur ve değişikliği commit'leyip push'l
   nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
   `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
   hesaplanır — ayrı bir "günlük anlık görüntü" tablosu tutulmaz.
-- Günde 4 kez (`kanal_finans.yml`) YouTube'daki **Kanal Finans** (Tunç
+- Günde 4 kez (GitHub Actions'ta DEĞİL — kendi bilgisayarında, `run_kanal_finans.ps1`
+  + Windows Task Scheduler, bkz. yukarıda "Kanal Finans TŞ'yi kendi
+  bilgisayarından çalıştırma") YouTube'daki **Kanal Finans** (Tunç
   Şatıroğlu) kanalı yeni video için kontrol edilir. Yeni bir video varsa
   Türkçe transkripti çekilip Claude'a verilir; Claude XRP/BTC/ETH/genel
   kripto hakkında söylenenleri **kendi görüşünü katmadan** kısa (tek

@@ -1,9 +1,14 @@
 name: Kanal Finans TS Watcher
 
+# No `schedule:` trigger -- confirmed live (2026-09-02) that GitHub Actions'
+# runner IP gets a systematic RequestBlocked from YouTube's transcript
+# endpoint (see CLAUDE.md), so this currently runs 4x/day from the user's own
+# machine instead (backend/run_kanal_finans.ps1 + Windows Task Scheduler).
+# Kept here as workflow_dispatch-only for manual testing, and so cron can be
+# re-enabled later without recreating the file (e.g. if a Webshare proxy --
+# WEBSHARE_PROXY_USERNAME/PASSWORD secrets below -- gets set up).
 on:
-  schedule:
-    - cron: "12 5,11,15,20 * * *"  # 08:12 / 14:12 / 18:12 / 23:12 Turkey time
-  workflow_dispatch: {}   # allows manual "Run workflow" trigger for testing
+  workflow_dispatch: {}
 
 permissions:
   contents: read
