@@ -135,7 +135,11 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   örtüşmüyor) — yani `ml` fiilen abstain eder hale geldi, `technical` de
   ciddi bastırılmış durumda. Bu "sistem bozuldu" değil, kalibrasyonun
   yapması gereken şey; ama genel işlem sıklığının belirgin şekilde
-  düşmesini beklenmedik bir regresyon sanma.
+  düşmesini beklenmedik bir regresyon sanma. **`daily_retrain.yml`
+  `backend/models/calibration.joblib`'i de commit'lemeli** (yalnızca
+  `xrp_model.joblib`'i commit'leyip calibration.joblib'i unutan bir sürümü
+  vardı — retrain.py günlük yeniden fit ediyordu ama runner kapanınca
+  sessizce siliniyordu, "günlük kendi kendini güncelleme" hiç işlemiyordu).
 - `daily_report.py` yeni bir tablo kullanmaz — dünkü 18:00'deki portföy
   durumunu `trades` tablosunu geriye doğru "replay" ederek (o zamandan
   önceki/o ana en yakın işlemin `cash_after`/`xrp_after`'i), dünkü XRP
