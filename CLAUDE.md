@@ -71,6 +71,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   bir küçük backtest koşusuna dayandırma.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
+- **Bir tahmin, hedef anındaki gerçek fiyata göre çözülür** — çözümleyicinin
+  çalıştığı andaki canlı fiyata göre DEĞİL (`predict.py:price_at_target`,
+  hedef anda kapanan 1 dakikalık mumun kapanışını çeker; mum çekilemezse
+  canlı fiyata düşer ki satır yine de çözülsün). Bu ayrım kritik: 2026-09-03'e
+  kadar `resolve_due_predictions` canlı fiyatı kullanıyordu ve koşular çeyrek
+  saat işaretinden ~1 dk sonra düştüğü için her tahmin 10-30 dk geç
+  puanlanıyordu; GitHub Actions cron'u geciktirdiğinde (doğrulanmış 2sa56dk'lik
+  bir boşluk) 15 dakikalık bir tahmin ~3 saatlik harekete göre puanlandı.
+  Ölçüldü: 240 satırın 80'i (%33.5) yanlış puanlanmıştı, kayıtlı isabet %51.5
+  iken gerçek %46.1. Geçmiş satırlar tek seferlik bir script'le yeniden
+  çözüldü. **Bu veri `retrain.py`'nin rolling accuracy'sini ve oradan ensemble
+  ağırlıklarını besliyor** — yani ölçüm hatası doğrudan öğrenme döngüsünü
+  bozuyordu. Buraya tekrar canlı fiyat koyma.
 - Yön sinyali altı bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
   ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag +
   taker buy ratio dahil), ML model (`ml_model.py`, aynı taker buy ratio bir
@@ -90,7 +103,22 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   sadece sürekli nötr (confidence=0) kalır. Model `claude_signal.MODEL`'de
   sabit (`claude-sonnet-5`) — daha ucuz Haiku 4.5 ile denendi ama kalite
   için tekrar Sonnet 5'e çevrildi, günde 96 çağrı (15 dk'da bir) ile ~$5-6/ay
-  civarı. Hepsi (`claude` dahil) API/parse hatasında sessizce nötre düşer,
+  civarı. **Fable 5.1'e yükseltmek 2026-09-03'te değerlendirilip reddedildi**:
+  $10/$50 per MTok ile Sonnet 5'in ($2/$10) tam 5 katı, yani ~$25-30/ay — ve
+  bu görev `effort="low"` ile 2 alanlı bir JSON sınıflandırması, Anthropic'in
+  kendi rehberi sınıflandırma/yüksek-hacim rotalarının model gücüne zayıf
+  tepki verdiğini söylüyor. Ampirik olarak da darboğaz model değil: `claude`
+  6 bileşenin en kötüsü ve projenin backtest'leri 15 dakikalık XRP yönünde
+  ~%50 tavanı gösteriyor. Daha pahalı model gürültü tabanını yenmez.
+  **Prompt'taki bir hata 2026-09-03'te düzeltildi**: sistem prompt'u "do not
+  just restate the technical signal's direction" diyordu — niyeti körü körüne
+  tekrarlamayı önlemekti ama modeli *ayrışmaya* itiyordu, üstelik `technical`
+  ölçülen avantajı olan tek bileşen. Canlı veri bununla tutarlıydı: ilk 73
+  çözülmüş tahminde `claude`, `technical` ile sadece %48 hemfikirdi, 73'ün
+  56'sında DOWN dedi ve %37 isabet tutturdu — yani bilgisiz değil, ters
+  korelasyonluydu. Küçük örneklemde bir hipotez, kanıtlanmış bir neden değil;
+  birkaç yüz satır daha birikince yön dağılımına ve isabete tekrar bak.
+  Hepsi (`claude` dahil) API/parse hatasında sessizce nötre düşer,
   bir bileşenin hıçkırığı tahmin döngüsünü hiç bloklamaz. **`orderbook` (ve
   `whale`/`news`/`claude`) canlı-only — geçmiş arşivi yok (Claude'u ucuza
   geriye test etmenin bir yolu da yok, paralı bir LLM çağrısını geçmişe karşı
@@ -98,8 +126,25 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   technical+ML'i test edebilir**, bu sınırlama backtest raporunda açıkça
   belirtilir.
   Ağırlıklar `retrain.py` tarafından günlük olarak son 14 günlük başarı
-  oranına göre güncellenir (`model_state` tablosu) ve ham haliyle **her
-  zaman** tam %100'e tamamlanır (float toplamı) — ekranda %100 etmiyormuş
+  oranına göre güncellenir (`model_state` tablosu). **Ağırlık, ham isabet
+  oranıyla değil, yazı-turaya göre *kanıtlanmış üstünlükle* orantılıdır**
+  (`ensemble.recompute_weights`, Wilson alt sınırı − 0.5). Eskiden ham
+  isabetle orantılıydı ve bu, "bu bileşen kötü" diyemiyordu: 2026-09-03'te
+  240 canlı tahminde `claude` %37 isabetle, `orderbook` %48 ile hâlâ ~%15
+  ağırlık alıyordu — en iyi bileşenden sadece ~3 puan az. Sonuç: yazı-turanın
+  altındaki beş bileşen, avantajı olan tek bileşeni rahatça oyluyordu ve
+  harman %46 yaparken en iyi tek bileşeni (`technical`) %58 yapıyordu.
+  İki bilinçli muhafazakârlık koruması var: (1) Wilson alt sınırı sayesinde
+  ince/şanslı bir sicil sıfır avantaj verir, hiçbir şey barajı geçmezse
+  varsayılanlar korunur (gürültüyü yetenek sanmamak için); (2) `MAX_WEIGHT`
+  (0.40) tek bir bileşenin harmanı ele geçirmesini engeller — bu koruma
+  olmasa mevcut veride `technical` 1.6 puanlık bir Wilson avantajıyla 0.80'e
+  fırlıyordu. **Bu ikisini kaldırma**: canlı geçmiş hâlâ kısa (~3 gün) ve
+  projenin çok daha büyük 20.000 mumluk backtest'i technical+ML'i %50'de
+  gösteriyor, yani bugünkü görünen avantajlar pekâlâ gürültü olabilir.
+  `recompute_weights` artık oran değil `(doğru_sayısı, toplam)` alır —
+  örneklem büyüklüğü olmadan Wilson hesaplanamaz. Ağırlıklar ham haliyle
+  **her zaman** tam %100'e tamamlanır (float toplamı) — ekranda %100 etmiyormuş
   gibi görünüyorsa veri değil gösterim sorunudur: `app.js`'de her ağırlık
   bağımsız `Math.round`'lanıyordu, hem bu yüzden ~1 puan kayabiliyordu hem
   de `orderbook` gösterime hiç dahil değildi. `roundWeightsTo100()`
@@ -145,6 +190,23 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   düzeltmelerin gerçek etkisi ancak birkaç haftalık yeni canlı veriyle
   görülebilir (backtest edilemiyorlar) — `predictions` tablosundan tekrar
   kontrol etmeden "düzeldi" deme.
+  **2026-09-03'te o kontrol yapıldı** (240 canlı tahmin): `whale` GERÇEKTEN
+  düzelmiş (UP 66 / DOWN 68, dengeli). **`news` düzelmemişti** — 127 satırın
+  121'inde hâlâ UP diyordu. Kelime-sınırı düzeltmesi çalışıyordu; yanlılık
+  başka iki yerden geliyordu: (a) skor, penceredeki *tüm* başlıkların anahtar
+  kelime vuruşlarının TOPLAMI'ydı, yani sinyal gücü haber *hacmiyle*
+  ölçekleniyor ve "surge/rally/bullish" ile doldurulmuş tek bir clickbait
+  başlık üç kez sayılıyordu; (b) kripto başlık sözlüğü yapısal olarak
+  promosyoneldir — `launch`/`partnership`/`rally` rutin haberde her saat
+  geçer, `sued`/`banned`/`fraud`/`hacked` ise sadece gerçek bir olayda. Yani
+  bileşen bir sinyal değil, ~%15 ağırlıkla sabit bir UP enjektörüydü. Artık
+  **başlık başına tek oy** (anahtar kelime başına değil), toplam eşleşen
+  ağırlığa **normalize** (hacim düşer) ve belirgin bir eğim yoksa **abstain**
+  ediyor (`MIN_MATCHED_HEADLINES`, `MIN_IMBALANCE`). Bu bileşenin çoğu zaman
+  SESSİZ kalması doğru davranıştır, arıza değil. Bu iki eşik ilk tahmindir —
+  geçmiş başlık arşivi olmadığı için fit edilemezler, canlı `predictions`
+  verisiyle doğrulanmaları gerekir: **yine "düzeldi" demeden önce UP/DOWN
+  dağılımına tekrar bak.**
 - **Model uyumluluk kontrolü şart**: `FEATURE_COLUMNS`'a yeni bir özellik
   eklersen, repoda committed duran eski `models/xrp_model.joblib` artık
   uyumsuz olur. `predict.py`, modelin `n_features_in_`'ini

@@ -30,10 +30,13 @@ CALIBRATION_WARMUP_CANDLES = 50 * 4
 CALIBRATION_FEATURE_LIMIT = 400
 
 
-def _accuracy(values: list[bool]) -> float | None:
+def _record(values: list[bool]) -> tuple[int, int] | None:
+    """(correct_count, total) for ensemble.recompute_weights, or None below
+    the minimum sample size. The count -- not just the ratio -- is what lets
+    recompute_weights tell a real edge from a lucky short run."""
     if len(values) < MIN_RESOLVED_FOR_REWEIGHT:
         return None
-    return sum(1 for v in values if v) / len(values)
+    return sum(1 for v in values if v), len(values)
 
 
 PAGE_SIZE = 1000  # PostgREST caps a single response at ~1000 rows by default
@@ -62,7 +65,7 @@ def _fetch_all_since(db, since: str) -> list[dict]:
     return rows
 
 
-def rolling_accuracies(db) -> dict[str, float | None]:
+def rolling_records(db) -> dict[str, tuple[int, int] | None]:
     """Fetches resolved predictions from the trailing window and computes each
     ensemble component's accuracy client-side (avoids relying on the exact
     chaining semantics of the query builder's negation filter). A component's
@@ -72,7 +75,7 @@ def rolling_accuracies(db) -> dict[str, float | None]:
     since = (datetime.now(timezone.utc) - timedelta(days=ROLLING_WINDOW_DAYS)).isoformat()
     all_rows = _fetch_all_since(db, since)
 
-    accuracies: dict[str, float | None] = {}
+    records: dict[str, tuple[int, int] | None] = {}
     for component in ensemble.COMPONENTS:
         prefix = ensemble.COLUMN_PREFIX[component]
         values = [
@@ -80,8 +83,8 @@ def rolling_accuracies(db) -> dict[str, float | None]:
             for row in all_rows
             if row[f"{prefix}_correct"] is not None and (row.get(f"{prefix}_confidence") or 0) > 0
         ]
-        accuracies[component] = _accuracy(values)
-    return accuracies
+        records[component] = _record(values)
+    return records
 
 
 def upsert_weight(db, component: str, weight: float, accuracy: float | None) -> None:
@@ -173,13 +176,15 @@ def main() -> int:
         calibration.save(merged)
         print(f"Calibration refit complete for: {list(calibrators)}")
 
-    accuracies = rolling_accuracies(db)
-    new_weights = ensemble.recompute_weights(accuracies)
+    records = rolling_records(db)
+    new_weights = ensemble.recompute_weights(records)
 
+    accuracies = {c: (records[c][0] / records[c][1] if records[c] else None)
+                  for c in ensemble.COMPONENTS}
     for component in ensemble.COMPONENTS:
         upsert_weight(db, component, new_weights[component], accuracies[component])
 
-    print(f"Updated ensemble weights: {new_weights} (accuracies={accuracies})")
+    print(f"Updated ensemble weights: {new_weights} (accuracies={accuracies}, records={records})")
     return 0
 
 

@@ -31,12 +31,24 @@ SYSTEM_PROMPT = (
     "You are a short-horizon (15-45 minute) XRP/USDT price direction "
     "forecaster for a paper-trading experiment. You'll see the current "
     "technical-indicator signal, an XRPL exchange whale-flow signal, and "
-    "recent XRP/Ripple news headlines. Form your own independent judgment -- "
-    "do not just restate the technical signal's direction. Most of the time "
+    "recent XRP/Ripple news headlines. Weigh that evidence and reach your own "
+    "judgment. Agreeing with the technical signal is a perfectly good answer "
+    "when the evidence supports it -- judge it on the merits rather than "
+    "either deferring to it or avoiding it. Most of the time "
     "there is no real edge over a coin flip; only report confidence above "
     "roughly 0.15 when you see a genuinely strong, specific reason. Respond "
     "only via the given schema."
 )
+# The previous wording here was "Form your own independent judgment -- do not
+# just restate the technical signal's direction." Intent was to stop this
+# component from parroting, but it reads as an instruction to *diverge*, and
+# `technical` is the one component with a measured edge. Live data was
+# consistent with that backfiring: over its first 73 resolved predictions
+# `claude` matched `technical` only 48% of the time, called DOWN in 56 of 73,
+# and scored 37% accuracy -- the worst of the six, and anti-correlated rather
+# than merely uninformative. That's a hypothesis on a small sample, not a
+# proven cause; recheck the direction split and accuracy once a few hundred
+# more rows have accumulated before concluding this rewording helped.
 
 RESPONSE_SCHEMA = {
     "type": "object",

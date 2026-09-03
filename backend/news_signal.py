@@ -23,7 +23,31 @@ GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
 QUERY = "XRP OR Ripple"
 TIMEOUT = 15
 LOOKBACK_HOURS = 6
-FULL_CONFIDENCE_HIT_COUNT = 6  # net keyword-weighted headline score mapping to confidence 1.0
+
+# Measured on 240 live predictions (2026-09-03): this component said UP in
+# 121 of the 127 rows where it had an opinion at all -- effectively a
+# constant, not a signal, and at ~15% ensemble weight that's a fixed UP bias
+# injected into every blend. The word-boundary fix below was working fine;
+# the bias came from two other places:
+#
+#   1. Score was a SUM of keyword hits across every headline in the window,
+#      so signal strength scaled with news *volume*, and one clickbait title
+#      stuffed with "surge/rally/bullish" counted three times (six with the
+#      regulatory multiplier).
+#   2. Crypto headline vocabulary is structurally promotional -- "launch",
+#      "partnership", "rally", "surge" appear in routine coverage every hour,
+#      while "sued"/"banned"/"fraud"/"hacked" only appear on a real event. So
+#      the positive list fires near-constantly and the negative list rarely.
+#
+# Now: one vote per headline (not per keyword), normalized by total matched
+# weight so volume drops out, and it abstains unless the tilt is genuinely
+# lopsided. The component should be SILENT most of the time -- that's the
+# correct behavior for it, not a malfunction. These two thresholds are
+# initial estimates; there's no historical headline archive to fit them
+# against, so they need live `predictions` data to validate (check the
+# UP/DOWN split again before declaring this fixed -- see CLAUDE.md).
+MIN_MATCHED_HEADLINES = 3  # below this, a single headline would drive the whole signal
+MIN_IMBALANCE = 0.5        # |balance| under this = no clear tilt -> abstain (0.5 ~ a 3:1 split)
 
 POSITIVE_KEYWORDS = [
     "approve", "approves", "approval", "win", "wins", "victory", "dismiss",
@@ -109,20 +133,38 @@ def news_signal() -> dict:
     keyword."""
     headlines = recent_headlines()
 
-    net_score = 0.0
+    pos_weight = 0.0
+    neg_weight = 0.0
+    matched = 0
     for item in headlines:
         title = item["title"].lower()
         pos_hits = len(_keyword_hits(title, POSITIVE_KEYWORDS))
         neg_hits = len(_keyword_hits(title, NEGATIVE_KEYWORDS))
-        if pos_hits == 0 and neg_hits == 0:
+        if pos_hits == neg_hits:
+            # No lean (either nothing matched, or positive and negative
+            # keywords cancel within the same headline) -- don't vote.
             continue
 
+        # One vote per headline, regardless of how many keywords it packs;
+        # regulatory/legal headlines have historically moved XRP hardest, so
+        # they carry double weight as a *headline*, not per keyword.
         weight = 2.0 if _keyword_hits(title, REGULATORY_KEYWORDS) else 1.0
-        net_score += (pos_hits - neg_hits) * weight
+        matched += 1
+        if pos_hits > neg_hits:
+            pos_weight += weight
+        else:
+            neg_weight += weight
 
-    if net_score == 0:
+    total = pos_weight + neg_weight
+    if matched < MIN_MATCHED_HEADLINES or total == 0:
         return dict(NEUTRAL)
 
-    score = max(-1.0, min(1.0, net_score / FULL_CONFIDENCE_HIT_COUNT))
+    # Normalized by total matched weight, so a busy news hour and a quiet one
+    # with the same tilt produce the same confidence.
+    balance = (pos_weight - neg_weight) / total
+    if abs(balance) < MIN_IMBALANCE:
+        return dict(NEUTRAL)
+
+    score = max(-1.0, min(1.0, balance))
     direction = "UP" if score >= 0 else "DOWN"
     return {"direction": direction, "confidence": abs(score), "score": score}
