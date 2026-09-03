@@ -12,6 +12,25 @@ SHRINK_ALPHA = 30.0        # pseudo-observations pulling a component's P(correct
 LOGODDS_CAP = 1.5          # per-component ceiling, so no single record dominates the pool
 CORRELATION_DAMPING = 0.7  # components aren't independent; undamped the pool is overconfident
 
+# A component measured BELOW 50% carries real information -- read backwards it
+# beats a coin flip -- and pure log-odds pooling exploits that by letting it
+# contribute negatively. That was live briefly on 2026-09-03 and then turned
+# off deliberately, on the measurement rather than on taste: over the same
+# walk-forward (n=163) inverting scored 55.8% against 54.0% for simply
+# silencing a sub-50% component -- 1.8 points, comfortably inside the noise
+# at this sample size (the two intervals almost entirely overlap). The whole
+# real gain, 41.1% -> 54.0%, comes from putting every component on one
+# P(correct) scale; inversion adds nothing measurable on top.
+#
+# So it stays off: unproven, resting on ~3 days of history (if whale/claude
+# are truly 50% coin flips, inverting them is memorising noise), and it
+# produces behaviour that can't be defended to a person looking at the UI --
+# all six components saying UP while the blend prints DOWN.
+#
+# Revisit with a few weeks of live history: if a component is still clearly
+# sub-50% over a few hundred resolved rows, flip this back on and re-measure.
+ALLOW_INVERSION = False
+
 # predictions-table column prefix per component. "technical" is shortened to
 # "tech" there to keep column names compact; every other component's columns
 # use its own name as-is.
@@ -27,8 +46,12 @@ def reliability(correct: int, total: int) -> float:
 
 
 def _component_logodds(correct: int, total: int) -> float:
+    """How much evidence this component's call is worth, in log-odds. Zero
+    means "says nothing useful" -- which is also where a component measured
+    below 50% lands while ALLOW_INVERSION is off (see that constant)."""
     p = reliability(correct, total)
-    return max(-LOGODDS_CAP, min(LOGODDS_CAP, math.log(p / (1 - p))))
+    lo = max(-LOGODDS_CAP, min(LOGODDS_CAP, math.log(p / (1 - p))))
+    return lo if ALLOW_INVERSION else max(lo, 0.0)
 
 
 def _legacy_combine(signals: dict[str, dict], weights: dict[str, float]) -> dict:
@@ -70,23 +93,24 @@ def combine(signals: dict[str, dict], weights: dict[str, float] | None = None,
     is weight x confidence and confidence was the dominant term.
 
     Log-odds pooling fixes it structurally: every component enters on one
-    scale, P(correct). A component at 0.5 contributes exactly nothing, and
-    one that is reliably WRONG contributes negatively -- it gets inverted,
-    which is the mathematically right thing to do with an anti-predictive
-    signal rather than merely down-weighting it. That also makes a separate
-    accuracy-based weight scheme redundant: the log-odds *is* the weight.
+    scale, P(correct). How reliable a component has proven to be *is* its
+    weight, so a separate accuracy-based weight scheme is redundant. A
+    component at or below 0.5 contributes exactly nothing (see
+    ALLOW_INVERSION for why sub-50% components are silenced rather than
+    read backwards).
 
-    Measured walk-forward, out-of-sample (n=162): this rule scores 55.6% vs
-    42.0% for the old confidence-weighted vote, 45.7% for a plain majority
-    and 53.1% for always calling DOWN. Scaling each contribution by the
-    component's stated confidence was tried and was worse (53.7%), which is
-    consistent with those stated confidences not meaning much.
+    Measured walk-forward, out-of-sample (n=163): 54.0%, against 41.1% for
+    the old confidence-weighted vote and 55.2% for technical on its own.
+    Two variants were tried and rejected: reading sub-50% components
+    backwards (55.8%, inside the noise -- see ALLOW_INVERSION) and scaling
+    each contribution by the component's stated confidence (53.7%, worse,
+    consistent with those stated confidences not meaning much).
 
     CORRELATION_DAMPING is applied to the summed log-odds because the
     components are not conditionally independent (technical, ml and orderbook
     all derive from price), so a naive Bayes sum double-counts evidence and
-    comes out overconfident. Undamped, this claimed 58.0% while delivering
-    55.6%; at 0.7 it claims 55.7% against 55.6% delivered, i.e. calibrated.
+    comes out overconfident. Undamped, the pool claimed 58.0% while
+    delivering 55.6%; at 0.7 it claimed 55.7% against 55.6%, i.e. calibrated.
     Damping does NOT change direction or accuracy -- only the magnitude of
     the confidence, which is what trading.py scales position size by, so it
     is purely a bet-sizing correction.
@@ -125,13 +149,12 @@ def influence_weights(reliabilities: dict[str, tuple[int, int] | None]) -> dict:
     display only (`model_state.weight`, the UI, the daily mail) -- combine()
     does not consume these; it pools the records directly.
 
-    **Signed**: the magnitudes sum to 1, and the sign says which way the
-    component is being read. Negative means it has been reliably wrong and is
-    therefore inverted -- it still carries real influence (that's why the
-    magnitude can be large), just in the opposite direction to what it says.
-    Displaying only magnitudes would put `claude` at the top of the list right
-    now purely because it is the most anti-predictive, which reads as "most
-    trusted" and is exactly backwards.
+    A component that hasn't beaten a coin flip contributes nothing and so
+    shows as 0% -- which is the honest reading: it isn't influencing the call.
+    Values stay signed because ALLOW_INVERSION can put negatives back (a
+    negative would mean "influential, but read backwards"); app.js and
+    daily_report.py label those "(ters)" so the most anti-predictive component
+    can never appear at the top of the list looking like the most trusted one.
     """
     signed = {}
     for c in COMPONENTS:

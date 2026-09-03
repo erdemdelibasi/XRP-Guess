@@ -136,16 +136,24 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   en kısık sesli, en kötüsü (whale, %42.6) en gürültülüydü. Sadece
   ağırlıkları düzeltmek bunu ONARMAZ, çünkü baskın çarpan güvendi.
   Log-odds havuzlaması bunu yapısal olarak çözer: her bileşen tek bir ölçeğe,
-  P(doğru)'ya girer. %50'deki bileşen tam olarak sıfır katkı verir; sürekli
-  YANILAN bileşen negatif katkı verir, yani **tersine çevrilir** — ters
-  korelasyonlu bir sinyal için matematiksel olarak doğru olan budur, sadece
-  ağırlığını kısmak değil. Bu yüzden ayrı bir isabet-bazlı ağırlık şemasına
-  gerek kalmadı (log-odds'un kendisi ağırlıktır) ve `recompute_weights`
-  kaldırıldı; yerine sadece gösterim için `influence_weights` var.
-  Ölçüm (yürüyen-ileri, örnekleme dışı, n=162): bu kural **%55.6**, eski
-  güvenle-ağırlıklı oy %42.0, sade çoğunluk %45.7, "her zaman DOWN" %53.1.
-  Katkıyı bileşenin beyan ettiği güvenle ölçeklemek de denendi, daha kötüydü
-  (%53.7) — beyan edilen güvenlerin bir şey ifade etmediğiyle tutarlı.
+  P(doğru)'ya girer ve bir bileşenin kanıtlanmış güvenilirliği **zaten onun
+  ağırlığıdır** — bu yüzden ayrı bir isabet-bazlı ağırlık şemasına gerek
+  kalmadı, `recompute_weights` kaldırıldı; yerine sadece gösterim için
+  `influence_weights` var. %50 ve altındaki bileşen tam olarak sıfır katkı
+  verir, yani **susturulur**.
+  Ölçüm (yürüyen-ileri, örnekleme dışı, n=163): bu kural **%54.0**, eski
+  güvenle-ağırlıklı oy %41.1, tek başına `technical` %55.2.
+  **Denenip reddedilen iki varyant**: (1) %50 altındaki bileşeni susturmak
+  yerine TERSİNE okumak (%55.8 — 1.8 puan, bu örneklemde tamamen gürültünün
+  içinde; kısa süre canlıda kaldı, sonra `ALLOW_INVERSION=False` ile
+  kapatıldı, gerekçe o sabitin yanında yazıyor). Asıl kazanç (%41→%54)
+  ters çevirmekten değil, her bileşeni tek bir P(doğru) ölçeğine
+  koymaktan geliyor — ters çevirme üstüne ölçülebilir bir şey koymuyor,
+  üstelik "altı bileşen de UP derken harman DOWN yazıyor" gibi kullanıcıya
+  savunulamayan bir davranış üretiyor. Birkaç yüz satır daha birikip bir
+  bileşen hâlâ net %50 altındaysa geri açıp yeniden ölç.
+  (2) Katkıyı bileşenin beyan ettiği güvenle ölçeklemek (%53.7, daha kötü)
+  — beyan edilen güvenlerin bir şey ifade etmediğiyle tutarlı.
   Üç sabit de seçilmedi, ölçüldü: `SHRINK_ALPHA` (30) P(doğru)'yu örneklem
   boyutuna göre 0.5'e çeker, yani ince kanıt otomatik olarak susar ve sistem
   veri biriktikçe kendi kendini düzeltir; `LOGODDS_CAP` (1.5) tek bir sicilin
@@ -157,14 +165,15 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   yani `trading.py`'nin pozisyon büyüklüğünü — saf bir bahis-boyutu
   düzeltmesidir (maks pozisyona ulaşan oran %18'den %4'e iner, eski davranışa
   yakın kalır). **Canlı geçmiş hâlâ kısa (~3 gün)** ve 20.000 mumluk backtest
-  technical+ML'i %50'de gösteriyor; şu an dört bileşen tersine çevrili
-  durumda, bu ince kanıta dayanıyor — birkaç hafta sonra sabitleri yeniden
+  technical+ML'i %50'de gösteriyor — birkaç hafta sonra sabitleri yeniden
   ölç. `model_state.sample_size` bunun için eklendi (isabet oranı tek başına
   6/10 ile 600/1000'i ayırt edemez); migration `supabase/schema.sql`'de.
-  Gösterim ağırlıkları **işaretlidir**: negatif = o bileşen tersine okunuyor,
-  `app.js` ve `daily_report.py` bunu "(ters)" diye gösterir — yoksa en çok
-  yanılan bileşen listenin başında "en güvenilir" gibi görünür. Ağırlıklar
-  mutlak değerce
+  Şu an sadece `technical` (%72) ve `ml` (%28) katkı veriyor, diğer dördü
+  %50 altında olduğu için susturulmuş durumda — bu bir arıza değil, kuralın
+  çalışması. Gösterim ağırlıkları işaretli tutuluyor (`ALLOW_INVERSION` geri
+  açılırsa negatif değerler oluşur; `app.js` ve `daily_report.py` onları
+  "(ters)" diye etiketler ki en çok yanılan bileşen listenin başında "en
+  güvenilir" gibi görünmesin). Ağırlıklar mutlak değerce
   **her zaman** tam %100'e tamamlanır (float toplamı) — ekranda %100 etmiyormuş
   gibi görünüyorsa veri değil gösterim sorunudur: `app.js`'de her ağırlık
   bağımsız `Math.round`'lanıyordu, hem bu yüzden ~1 puan kayabiliyordu hem
