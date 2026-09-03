@@ -287,7 +287,10 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `kanal_finans.yml`'deki `schedule:` tetikleyicisi **bilerek kaldırıldı**
   (sadece `workflow_dispatch` kaldı, elle test için), gerçek zamanlama
   `backend/run_kanal_finans.ps1` + Windows Task Scheduler ile kullanıcının
-  makinesinde günde 4 kez (08:12/14:12/18:12/23:12 yerel saat) çalışıyor.
+  makinesinde günde 4 kez (10:15/15:00/19:00/23:30 yerel saat, Task
+  Scheduler görev tanımında duruyor — burada önceden 08:12/14:12/18:12/
+  23:12 yazıyordu, gerçek tetikleyicilerle uyuşmadığı 2026-09-03'te fark
+  edilip düzeltildi) çalışıyor.
   **Bu, projenin "sunucusuz" mimarisinden bilinçli bir sapma** — makine o
   saatlerde kapalıysa/uykudaysa o çalıştırma atlanır, bir sonraki zamanlanmış
   çalıştırmada `main()` zaten idempotent olduğu için otomatik telafi olur.

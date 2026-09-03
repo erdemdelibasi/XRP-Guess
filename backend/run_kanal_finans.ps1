@@ -22,4 +22,8 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $logFile = Join-Path $logDir ("kanal_finans_{0}.log" -f (Get-Date -Format "yyyy-MM-dd"))
 
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-& $python (Join-Path $PSScriptRoot "kanal_finans.py") *>> $logFile
+# *>> yerine Out-File -Encoding utf8 kullaniliyor: Windows PowerShell 5.1'de
+# redirection operatorleri (*>>, >>) varsayilan olarak UTF-16LE yaziyor, bu da
+# UTF-8 bekleyen araclarla (Read tool, grep, vs.) acilinca Turkce karakterlerin
+# arasina bosluk giren okunmaz bir log uretiyordu.
+& $python (Join-Path $PSScriptRoot "kanal_finans.py") 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
