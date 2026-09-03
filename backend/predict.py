@@ -52,6 +52,32 @@ def next_quarter_hour(now: datetime) -> datetime:
     return floored + timedelta(minutes=step)
 
 
+def price_at_target(target_time: datetime, fallback: float) -> float:
+    """Close of the 1-minute candle ending exactly at `target_time` -- the
+    real market price at the moment a prediction was actually aiming for.
+
+    Resolution used to score against whatever the live price happened to be
+    when the resolver ran, which is a different and variable horizon: runs
+    land ~1 min after each quarter-hour, so a :15 target was routinely scored
+    10-30 minutes late, and when GitHub Actions delays the cron (a confirmed
+    2h56m gap on 2026-09-03) a 15-minute prediction got scored against a
+    ~3-hour move. That inflates or destroys accuracy at random and feeds
+    straight into retrain.py's rolling accuracies and the ensemble weights.
+
+    Falls back to the live price if the candle can't be fetched, so a Binance
+    hiccup still resolves the row rather than leaving it stuck unresolved.
+    """
+    try:
+        end_ms = int(target_time.timestamp() * 1000) - 1
+        candles = get_klines(SYMBOL, interval="1m", limit=1, end_time_ms=end_ms)
+        if not candles.empty:
+            return float(candles["close"].iloc[-1])
+        print(f"WARNING: no 1m candle at {target_time.isoformat()}; using live price.")
+    except Exception as exc:  # noqa: BLE001 -- see docstring
+        print(f"WARNING: couldn't fetch price at {target_time.isoformat()} ({exc}); using live price.")
+    return fallback
+
+
 def resolve_due_predictions(db, current_price: float) -> None:
     now_iso = datetime.now(timezone.utc).isoformat()
     due = (
@@ -61,8 +87,14 @@ def resolve_due_predictions(db, current_price: float) -> None:
         .lte("target_time", now_iso)
         .execute()
     )
+    price_cache: dict[str, float] = {}
     for row in due.data:
-        actual_direction = "UP" if current_price > row["price_at_prediction"] else "DOWN"
+        target_time = datetime.fromisoformat(row["target_time"])
+        if row["target_time"] not in price_cache:
+            price_cache[row["target_time"]] = price_at_target(target_time, current_price)
+        resolution_price = price_cache[row["target_time"]]
+
+        actual_direction = "UP" if resolution_price > row["price_at_prediction"] else "DOWN"
         correct = actual_direction == row["predicted_direction"]
         tech_correct = row.get("tech_direction") is not None and actual_direction == row["tech_direction"]
         ml_correct = row.get("ml_direction") is not None and actual_direction == row["ml_direction"]
@@ -73,7 +105,7 @@ def resolve_due_predictions(db, current_price: float) -> None:
 
         db.table("predictions").update({
             "resolved_at": now_iso,
-            "price_at_resolution": current_price,
+            "price_at_resolution": resolution_price,
             "actual_direction": actual_direction,
             "correct": correct,
             "tech_correct": tech_correct,
