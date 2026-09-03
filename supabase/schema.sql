@@ -166,13 +166,26 @@ create index if not exists strategy_trades_strategy_idx on strategy_trades (stra
 -- ancak transkript+Claude cikarimi basariyla tamamlandiktan sonra
 -- kanal_finans_videos'a yazilir (kripto bahsi hic yoksa bile, 0 mention'li
 -- "islendi" satiri normaldir); herhangi bir adim basarisiz olursa video hic
--- yazilmaz ve bir sonraki cron kosusunda otomatik tekrar denenir.
+-- yazilmaz ve bir sonraki kosuda otomatik tekrar denenir.
 create table if not exists kanal_finans_videos (
   video_id          text primary key,
   video_title       text,
   published_at      timestamptz,
   processed_at      timestamptz not null default now(),
   transcript_found  boolean not null default false
+);
+
+-- Basarisiz olan videolarin tekrar-deneme sayaci. Yerel gorev 4 kez/gun
+-- yerine 15 dakikada bir calistigi icin var: geri cekilme olmadan transkripti
+-- IP-engelli bir video gunde 96 kez, zaten bizi reddeden endpoint'e
+-- vurulurdu. Sadece basarisizken satiri olur -- video basariyla islenince
+-- satir silinir (kanal_finans.py:clear_failures). Bekleme araligi
+-- kanal_finans.py:RETRY_SCHEDULE'da.
+create table if not exists kanal_finans_fetch_attempts (
+  video_id          text primary key,
+  attempts          int not null default 0,
+  last_attempt_at   timestamptz not null default now(),
+  last_error        text
 );
 
 create table if not exists kanal_finans_mentions (
@@ -239,6 +252,10 @@ alter table strategy_portfolios enable row level security;
 alter table strategy_trades enable row level security;
 alter table kanal_finans_videos enable row level security;
 alter table kanal_finans_mentions enable row level security;
+-- Bilerek "public read" policy'si YOK: bu tablo sadece backend'in tekrar-
+-- deneme muhasebesi, frontend hic okumuyor. RLS acik + policy yok = anon
+-- key ile okunamaz; backend service_role ile RLS'i zaten baypas ediyor.
+alter table kanal_finans_fetch_attempts enable row level security;
 alter table kanal_finans_portfolio enable row level security;
 alter table kanal_finans_trades enable row level security;
 

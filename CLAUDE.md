@@ -14,7 +14,7 @@ GitHub Actions (cron, sunucusuz zamanlayıcı)
 
 Kullanıcının kendi bilgisayarı (Windows Task Scheduler -- GitHub Actions DEĞİL,
 bkz. aşağıdaki Kanal Finans notu)
-  -> backend/run_kanal_finans.ps1 -> kanal_finans.py   günde 4 kez, ensemble'dan bağımsız
+  -> backend/run_kanal_finans.ps1 -> kanal_finans.py   her 15 dk, ensemble'dan bağımsız
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -376,15 +376,39 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   çözüm bir proxy (`_build_api()` hâlâ `WEBSHARE_PROXY_USERNAME`/
   `WEBSHARE_PROXY_PASSWORD` set edilirse `WebshareProxyConfig` üzerinden
   bağlanmayı destekliyor, ama kullanıcı webshare.io'ya kurumsal ağından
-  erişemediği için şimdilik kullanılmıyor). Kullanıcının kendi bilgisayarından
-  yapılan istekler engellenmiyor (yerelde doğrulandı) — bu yüzden
+  erişemediği için şimdilik kullanılmıyor). **2026-09-03 güncellemesi: "yerel
+  makine engellenmiyor" varsayımı artık doğru DEĞİL** — o gün hem 10:15'teki
+  zamanlanmış koşu (`QsJ-xe4BJh0`) hem de elle yapılan iki test koşusu
+  (`_y4xjtJg5Qg`) kullanıcının kendi makinesinden `IpBlocked` aldı. Yani
+  yerele taşımak engeli tamamen çözmedi, sadece azalttı; kalıcı çözüm hâlâ
+  bir residential proxy (Webshare) ve o da kurumsal ağ erişimine bağlı.
+  Bu yüzden tekrar-deneme geri çekilmesi (aşağıda) kozmetik bir iyileştirme
+  değil, engeli kötüleştirmemek için gerekli. — bu yüzden
   `kanal_finans.yml`'deki `schedule:` tetikleyicisi **bilerek kaldırıldı**
   (sadece `workflow_dispatch` kaldı, elle test için), gerçek zamanlama
   `backend/run_kanal_finans.ps1` + Windows Task Scheduler ile kullanıcının
-  makinesinde günde 4 kez (10:15/15:00/19:00/23:30 yerel saat, Task
-  Scheduler görev tanımında duruyor — burada önceden 08:12/14:12/18:12/
-  23:12 yazıyordu, gerçek tetikleyicilerle uyuşmadığı 2026-09-03'te fark
-  edilip düzeltildi) çalışıyor.
+  makinesinde **her 15 dakikada bir** (00:00'dan başlayan günlük tetikleyici,
+  15 dk tekrar aralığı, 24 saat süre) çalışıyor. Eskiden günde 4 kezdi
+  (10:15/15:00/19:00/23:30); 2026-09-03'te 15 dakikaya çekildi çünkü yeni
+  video YOKKEN bir koşunun maliyeti pratikte sıfır: bir RSS GET (~3 KB) +
+  bir Supabase SELECT, sonra `return` — transkript yok, Claude çağrısı yok,
+  para yok. Kazanç, yeni bir videoyu yakalama gecikmesinin ~6 saatten 15
+  dakikaya inmesi. **YouTube'un WebSub/PubSubHubbub push'u değerlendirilip
+  reddedildi**: gerçek bir push servisi var (saniyeler içinde bildirim) ama
+  callback'in herkese açık bir HTTPS endpoint olması gerekiyor; transkripti
+  çekmesi gereken makine ise kurumsal ağın arkasındaki yerel makine, yani
+  bildirim Vercel/Supabase'e düşse bile yerel makine yine bir yeri
+  yoklamak zorunda — sorgu ortadan kalkmıyor, sadece YouTube'dan Supabase'e
+  taşınıyor. Gerçek push için makinede 7/24 açık bir Supabase Realtime
+  dinleyicisi (Task Scheduler yerine servis) gerekirdi; uyku/reboot'ta
+  ölen, çok daha kırılgan bir parça karşılığında kazanç 15 dakikadan
+  saniyelere inmek — günde birkaç video atan bir kanal için değmiyor.
+  Görev ayrıca `MultipleInstances=IgnoreNew` (yavaş bir koşu üst üste
+  binmesin), `ExecutionTimeLimit=10 dk` (tekrar aralığının altında) ve
+  **pilde de çalışacak** şekilde ayarlandı — `DisallowStartIfOnBatteries`
+  varsayılan olarak açıktı, yani dizüstü fişten çekiliyken görev HİÇ
+  çalışmıyordu; 3 saniyelik bir Python koşusu için bu ayar tüm mekanizmayı
+  boşa çıkarıyordu.
   **Bu, projenin "sunucusuz" mimarisinden bilinçli bir sapma** — makine o
   saatlerde kapalıysa/uykudaysa o çalıştırma atlanır, bir sonraki zamanlanmış
   çalıştırmada `main()` zaten idempotent olduğu için otomatik telafi olur.
@@ -399,7 +423,22 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   tamamlandıktan sonra `kanal_finans_videos`'a yazılır (kripto bahsi hiç
   yoksa bile 0 mention'lı "işlendi" satırı normaldir); herhangi bir adım
   başarısız olursa video hiç yazılmaz ve bir sonraki zamanlanmış çalıştırmada
-  otomatik tekrar denenir. Claude'a (`claude-sonnet-5`, aynı
+  otomatik tekrar denenir. **Tekrar denemeler geri çekilmeli**
+  (`kanal_finans.py:RETRY_SCHEDULE`, sayaç `kanal_finans_fetch_attempts`
+  tablosunda): ilk 3 başarısızlık her koşuda (15 dk) yeniden denenir, sonra
+  sırasıyla 1 saat / 4 saat / 12 saat aralıklarla. Bu, 15 dakikalık zamanlama
+  değişikliğinin zorunlu eşlikçisidir — geri çekilme olmadan transkripti
+  IP-engelli tek bir video günde 96 kez, **zaten bizi reddeden** endpoint'e
+  vurulurdu; geçici bir engeli kalıcıya çevirmenin en garanti yolu bu olurdu.
+  Kalıcı takılı bir video böylece ~2 deneme/gün'e oturur, yeni bir video ise
+  hiç geciktirilmez (kaydı olmadığı için her zaman "due"dur). Bilerek bir
+  pes-etme eşiği yok: genişleyen aralık maliyeti zaten sınırlıyor ve video
+  eninde sonunda RSS penceresinden düşüyor. Satır video başarıyla
+  işlenince silinir (`clear_failures`). Tablonun okunması/yazılması
+  **fail-soft**: tablo yoksa (migration uygulanmamışsa) ya da Supabase
+  hıçkırırsa koşu ölmez, sadece geri çekilme kaybolur ve eski "her koşuda
+  yeniden dene" davranışına düşülür — bu yüzden o durumda log'a **yüksek
+  sesli bir WARNING** basılır, çünkü tam olarak önlemek istediğimiz şey odur. Claude'a (`claude-sonnet-5`, aynı
   `claude_signal.py` modeli) **kendi görüşünü değil, konuşmacının
   söylediğini sadakatle özetlemesi** açıkça söyleniyor (`SYSTEM_PROMPT`) —
   `stance` (UP/DOWN/NEUTRAL) Tunç Şatıroğlu'nun tonunu yansıtır, bizim

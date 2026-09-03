@@ -23,13 +23,16 @@ hit with api.binance.com (see CLAUDE.md), which is why data-api.binance.vision
 is used there instead. There's no equivalent alternate host here, so instead
 this module fails soft per-video: a video is only written to
 kanal_finans_videos once BOTH the transcript fetch AND the Claude extraction
-succeed. Any failure at either step leaves the video unrecorded, so the next
-cron run (likely from a different GitHub Actions runner IP) retries it
-automatically -- a stuck video is never lost, just delayed.
+succeed. Any failure at either step leaves the video unrecorded, so a later
+run retries it automatically -- a stuck video is never lost, just delayed.
+How much later is governed by RETRY_SCHEDULE: retries widen out as a video
+keeps failing, so hammering a host that is already refusing us can't be what
+turns a temporary block into a lasting one.
 """
 import json
 import os
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
 
 import anthropic
 import requests
@@ -49,6 +52,19 @@ SYMBOL = "XRPUSDT"
 
 ASSETS = ("XRP", "BTC", "ETH", "KRIPTO")
 MODEL = "claude-sonnet-5"  # same model claude_signal.py uses; see CLAUDE.md for why Sonnet over Haiku
+
+# Retry backoff for a video that failed to process. This exists because the
+# scheduled run went from 4x/day to every 15 minutes (96x): without a backoff,
+# a video whose transcript is IP-blocked would be retried 96 times a day
+# against the very endpoint that is already refusing us -- the surest way to
+# turn a temporary block into a longer one. Attempts are cheap and useful
+# early (a blip clears on the next run) and near-worthless late, so the
+# interval widens with the failure count: a permanently stuck video settles at
+# ~2 attempts/day instead of 96, while a genuinely new video is never delayed.
+# There is deliberately no give-up threshold -- the widening interval already
+# bounds the cost, and a video simply falls out of the RSS window eventually.
+RETRY_SCHEDULE = ((3, 0), (6, 60), (10, 240))  # (failures below this, minutes to wait)
+RETRY_MAX_DELAY_MINUTES = 720
 
 _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
 
@@ -134,6 +150,75 @@ def get_recent_videos() -> list[dict]:
 def get_processed_ids(db) -> set[str]:
     resp = db.table("kanal_finans_videos").select("video_id").execute()
     return {row["video_id"] for row in resp.data}
+
+
+def get_fetch_attempts(db) -> dict[str, dict]:
+    """Failure record per video id, for the retry backoff (see RETRY_SCHEDULE).
+    A video only appears here while it is failing -- the row is deleted the
+    moment it processes successfully.
+
+    Fails soft, like every other optional lookup in this project: if the table
+    is missing (migration not applied yet) or Supabase hiccups, we simply lose
+    the backoff and fall back to the old always-retry behaviour rather than
+    killing the run. The warning is loud because that fallback is exactly the
+    hammering this table exists to prevent."""
+    try:
+        resp = db.table("kanal_finans_fetch_attempts").select("video_id,attempts,last_attempt_at").execute()
+    except Exception as exc:  # noqa: BLE001 -- see docstring
+        print(f"WARNING: kanal_finans retry-backoff table unreadable ({exc}); "
+              "every failed video will be retried every run until this is fixed.")
+        return {}
+    return {row["video_id"]: row for row in resp.data}
+
+
+def _retry_delay_minutes(attempts: int) -> int:
+    for threshold, minutes in RETRY_SCHEDULE:
+        if attempts < threshold:
+            return minutes
+    return RETRY_MAX_DELAY_MINUTES
+
+
+def is_retry_due(record: dict | None, now: datetime) -> bool:
+    """Whether a video that failed before should be attempted again now. A
+    video with no failure record (i.e. a new one) is always due."""
+    if not record:
+        return True
+    delay = _retry_delay_minutes(int(record.get("attempts") or 0))
+    if delay <= 0:
+        return True
+    last = record.get("last_attempt_at")
+    if not last:
+        return True
+    return now - datetime.fromisoformat(last.replace("Z", "+00:00")) >= timedelta(minutes=delay)
+
+
+def record_failure(db, video_id: str, previous: dict | None, reason: str) -> None:
+    """Bumps a video's failure counter so the next run waits longer before
+    retrying. Read-then-write is safe here: one scheduled task is the only
+    writer, and a lost increment would only cost an extra early retry."""
+    attempts = int((previous or {}).get("attempts") or 0) + 1
+    try:
+        db.table("kanal_finans_fetch_attempts").upsert({
+            "video_id": video_id,
+            "attempts": attempts,
+            "last_attempt_at": datetime.now(timezone.utc).isoformat(),
+            "last_error": reason[:500],
+        }).execute()
+    except Exception as exc:  # noqa: BLE001 -- bookkeeping must never sink the run
+        print(f"WARNING: couldn't record failure for {video_id} ({exc}).")
+        return
+    wait = _retry_delay_minutes(attempts)
+    print(f"kanal_finans: {video_id} failed {attempts}x, next attempt in >= {wait} min.")
+
+
+def clear_failures(db, video_id: str) -> None:
+    """Drops a video's failure record once it has processed successfully.
+    Best-effort: a leftover row would only delay a retry that is no longer
+    needed, since the video is now in kanal_finans_videos and filtered out."""
+    try:
+        db.table("kanal_finans_fetch_attempts").delete().eq("video_id", video_id).execute()
+    except Exception as exc:  # noqa: BLE001 -- see docstring
+        print(f"WARNING: couldn't clear failure record for {video_id} ({exc}).")
 
 
 def _build_api() -> YouTubeTranscriptApi:
@@ -262,18 +347,33 @@ def main() -> None:
         print("kanal_finans: no new videos since last run.")
         return
 
+    attempts = get_fetch_attempts(db)
+    now = datetime.now(timezone.utc)
     for video in new_videos:
-        transcript = fetch_transcript(video["video_id"])
+        video_id = video["video_id"]
+        previous = attempts.get(video_id)
+        if not is_retry_due(previous, now):
+            # Backing off, not giving up -- see RETRY_SCHEDULE. Skipping one
+            # video never holds up the others: a newly published video has no
+            # failure record and so is always attempted immediately.
+            print(f"kanal_finans: backing off '{video['title']}' ({video_id}), "
+                  f"{previous['attempts']} failure(s) so far.")
+            continue
+
+        transcript = fetch_transcript(video_id)
         if transcript is None:
-            print(f"kanal_finans: transcript unavailable for '{video['title']}' ({video['video_id']}), will retry next run.")
+            print(f"kanal_finans: transcript unavailable for '{video['title']}' ({video_id}).")
+            record_failure(db, video_id, previous, "transcript unavailable")
             continue
 
         mentions = extract_mentions(video["title"], transcript)
         if mentions is None:
-            print(f"kanal_finans: Claude extraction failed for '{video['title']}' ({video['video_id']}), will retry next run.")
+            print(f"kanal_finans: Claude extraction failed for '{video['title']}' ({video_id}).")
+            record_failure(db, video_id, previous, "claude extraction failed")
             continue
 
         saved = save_video_and_mentions(db, video, transcript_found=True, mentions=mentions)
+        clear_failures(db, video_id)
         print(f"kanal_finans: processed '{video['title']}' -- {len(mentions)} mention(s).")
 
         xrp_mentions = [m for m in saved if m["asset"] == "XRP"]
