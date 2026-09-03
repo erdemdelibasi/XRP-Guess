@@ -17,6 +17,7 @@ from email.mime.text import MIMEText
 from db import get_client
 import ensemble
 from fetch_data import get_current_price
+import kanal_finans_trading
 from predict import SYMBOL, get_ensemble_state
 import trading
 
@@ -24,11 +25,40 @@ TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
 TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
              "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri", "claude": "Claude"}
-STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "claude": "Claude"}
+
+# Kanal Finans TŞ is the seventh $1000 paper portfolio. It is NOT one of
+# trading.STRATEGIES (different tables, different decision engine -- see
+# kanal_finans_trading.py), but it *is* directly comparable on the one axis
+# the table below reports: what $1000 turned into. It has no prediction
+# accuracy to show, since it makes no 15-minute directional calls.
+KANAL_FINANS = "kanal_finans"
+REPORT_STRATEGIES = ("ensemble", *trading.STRATEGIES, KANAL_FINANS)
+STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina",
+                   "news": "Haber", "claude": "Claude", KANAL_FINANS: "Kanal Finans TŞ"}
+# Deliberately different wording from the ensemble's English UP/DOWN labels --
+# a stance is what Tunç Şatıroğlu said, not a prediction of ours (same
+# distinction app.js:KANAL_FINANS_STANCE_LABELS makes in the UI).
+STANCE_LABELS = {"UP": "Olumlu", "DOWN": "Olumsuz", "NEUTRAL": "Nötr"}
+ACTION_LABELS = {"BUY": "AL", "SELL": "SAT", "HOLD": "TUT"}
 
 
 def format_tr_date(dt: datetime) -> str:
     return f"{dt.day:02d} {TR_MONTHS[dt.month - 1]} {dt.year}"
+
+
+def _published_label(published_at: str | None) -> str:
+    """"01 Eylül 13:47" in Turkey time, from a stored ISO timestamp."""
+    if not published_at:
+        return "tarih yok"
+    dt = datetime.fromisoformat(published_at).astimezone(TIMEZONE)
+    return f"{dt.day:02d} {TR_MONTHS[dt.month - 1]} {dt.strftime('%H:%M')}"
+
+
+def _level_text(price, label: str) -> str:
+    """A level is only ever set when Tunç actually gave one; kanal_finans.py
+    already maps its 0 "not mentioned" sentinel to NULL, so falsy means
+    genuinely unknown here."""
+    return f"{label} ${float(price):.4f}" if price else f"{label} yok"
 
 
 def window_bounds(now_trt: datetime) -> tuple[datetime, datetime]:
@@ -63,14 +93,29 @@ def component_accuracy(rows: list[dict], component: str) -> tuple[float | None, 
     return sum(1 for v in values if v) / len(values), len(values)
 
 
+def _trades_table(strategy: str) -> str:
+    """Each portfolio family logs to its own table: the ensemble to `trades`,
+    the five single-signal strategies to a shared `strategy_trades` (keyed by
+    a `strategy` column), Kanal Finans TŞ to its own `kanal_finans_trades`."""
+    if strategy == "ensemble":
+        return "trades"
+    if strategy == KANAL_FINANS:
+        return "kanal_finans_trades"
+    return "strategy_trades"
+
+
+def live_portfolio_state(db, strategy: str) -> dict:
+    if strategy == KANAL_FINANS:
+        return kanal_finans_trading.get_portfolio_state(db)
+    return trading.get_portfolio_state(db, strategy)
+
+
 def portfolio_state_as_of(db, cutoff: datetime, strategy: str = "ensemble") -> tuple[float, float]:
     """Reconstructs (cash_usd, xrp_amount) as of `cutoff` from the most
-    recent trade at or before it; STARTING_CASH/0 if there was none yet.
-    `strategy`: "ensemble" reads `trades`, any of trading.STRATEGIES reads
-    `strategy_trades` filtered to that strategy."""
-    table = "trades" if strategy == "ensemble" else "strategy_trades"
+    recent trade at or before it; STARTING_CASH/0 if there was none yet."""
+    table = _trades_table(strategy)
     query = db.table(table).select("cash_after,xrp_after").lte("created_at", cutoff.isoformat())
-    if strategy != "ensemble":
+    if table == "strategy_trades":
         query = query.eq("strategy", strategy)
     res = query.order("created_at", desc=True).limit(1).execute()
     if res.data:
@@ -99,13 +144,13 @@ def price_as_of(db, cutoff: datetime) -> float | None:
 
 
 def trade_count_in_window(db, start: datetime, end: datetime, strategy: str = "ensemble") -> tuple[int, int, int]:
-    table = "trades" if strategy == "ensemble" else "strategy_trades"
+    table = _trades_table(strategy)
     query = (
         db.table(table).select("side")
         .gte("created_at", start.isoformat())
         .lt("created_at", end.isoformat())
     )
-    if strategy != "ensemble":
+    if table == "strategy_trades":
         query = query.eq("strategy", strategy)
     res = query.execute()
     buys = sum(1 for r in res.data if r["side"] == "BUY")
@@ -125,7 +170,7 @@ def strategy_report(db, strategy: str, start: datetime, end: datetime,
     cash_start, xrp_start = portfolio_state_as_of(db, start, strategy)
     value_start = cash_start + xrp_start * (price_start if price_start is not None else price_now)
 
-    live_state = trading.get_portfolio_state(db, strategy)
+    live_state = live_portfolio_state(db, strategy)
     cash_now, xrp_now = float(live_state["cash_usd"]), float(live_state["xrp_amount"])
     value_now = cash_now + xrp_now * price_now
 
@@ -136,6 +181,59 @@ def strategy_report(db, strategy: str, start: datetime, end: datetime,
         "xrp_now": xrp_now, "position": live_state["position"],
         "trade_total": trade_total, "buys": buys, "sells": sells,
         "accuracy": accuracy, "accuracy_count": accuracy_count,
+    }
+
+
+def kanal_finans_context(db, start: datetime, end: datetime) -> dict:
+    """What Tunç Şatıroğlu said, plus the levels his portfolio is currently
+    watching. Two different questions, so two different queries:
+
+    - "what arrived today" is keyed on `created_at` (when *we* processed the
+      video), not `published_at` -- a run blocked by YouTube's IP block for a
+      day catches up later, and the mail should report it on the day it was
+      actually ingested;
+    - "what is his standing view on XRP" is the latest XRP mention regardless
+      of date, because on a day with no new video (common -- the channel
+      doesn't post daily, and the local scheduled task can be skipped while
+      the machine is asleep) the *previous* call is still the one the
+      portfolio is acting on. Without this the card would just say "nothing
+      today" and carry no information at all.
+    """
+    new_mentions = (
+        db.table("kanal_finans_mentions")
+        .select("video_id,asset,stance,summary,video_title,published_at")
+        .gte("created_at", start.isoformat())
+        .lt("created_at", end.isoformat())
+        .order("published_at", desc=True)
+        .execute()
+    ).data
+
+    # Only the newest video's BTC/ETH/KRIPTO lines get printed. A normal day
+    # brings one or two videos, but a day that catches up on a backlog (the
+    # first run, or after YouTube's IP block clears) can bring a dozen -- and
+    # dumping 37 stale one-liners into the mail buries the part that matters.
+    # The counts above still report the full ingest.
+    newest_video = new_mentions[0]["video_id"] if new_mentions else None
+    other_assets = [m for m in new_mentions if m["video_id"] == newest_video and m["asset"] != "XRP"]
+
+    latest_xrp = (
+        db.table("kanal_finans_mentions")
+        .select("stance,action,summary,video_title,published_at,stop_loss_price,resistance_price")
+        .eq("asset", "XRP")
+        .order("published_at", desc=True)
+        .limit(1)
+        .execute()
+    ).data
+
+    state = kanal_finans_trading.get_portfolio_state(db)
+    return {
+        "mention_count": len(new_mentions),
+        "other_assets": other_assets,
+        "new_videos": len({m["video_id"] for m in new_mentions}),
+        "latest_xrp": latest_xrp[0] if latest_xrp else None,
+        "stop_loss_price": state.get("stop_loss_price"),
+        "resistance_price": state.get("resistance_price"),
+        "position": state["position"],
     }
 
 
@@ -158,6 +256,19 @@ def build_report(db) -> dict:
         acc, count = components[strategy]
         strategies[strategy] = strategy_report(db, strategy, start, end, price_start, price_now, acc, count)
 
+    # Kanal Finans is a separate subsystem (own tables, own schema migration,
+    # and its ingest runs on the user's machine rather than in CI) -- if any
+    # of that is missing or hiccups, the rest of the mail must still go out,
+    # so the whole section degrades to "absent" instead of failing the run.
+    try:
+        strategies[KANAL_FINANS] = strategy_report(
+            db, KANAL_FINANS, start, end, price_start, price_now, accuracy=None, accuracy_count=0)
+        kanal_finans = kanal_finans_context(db, start, end)
+    except Exception as exc:  # noqa: BLE001 -- see comment above
+        print(f"WARNING: Kanal Finans section skipped ({exc})")
+        strategies.pop(KANAL_FINANS, None)
+        kanal_finans = None
+
     weights, _ = get_ensemble_state(db)  # rapor sadece gosterim ağırlıklarını kullanıyor
 
     return {
@@ -165,6 +276,7 @@ def build_report(db) -> dict:
         "total_predictions": len(rows), "resolved": len(resolved), "correct": len(correct),
         "components": components,
         "strategies": strategies,
+        "kanal_finans": kanal_finans,
         "price_start": price_start, "price_now": price_now,
         "weights": weights,
     }
@@ -189,12 +301,18 @@ def render_text(report: dict) -> str:
     orderbook_text = f"%{acc_o * 100:.1f} ({count_o})" if acc_o is not None else "yeterli veri yok"
     lines.append(f"- Emir defteri (kendi portföyü yok): {orderbook_text}")
 
-    lines += ["", "5 STRATEJİ PERFORMANSI (her biri kendi $1000 ile)"]
+    present = [s for s in REPORT_STRATEGIES if s in report["strategies"]]
+    lines += ["", f"{len(present)} PORTFÖY PERFORMANSI (her biri kendi $1000 ile)"]
     best_name, best_pct = None, float("-inf")
-    for strategy in ("ensemble", *trading.STRATEGIES):
+    for strategy in present:
         s = report["strategies"][strategy]
         label = STRATEGY_LABELS[strategy]
-        acc_text = f"%{s['accuracy'] * 100:.0f} isabet ({s['accuracy_count']})" if s["accuracy"] is not None else "isabet: veri yok"
+        if s["accuracy"] is not None:
+            acc_text = f"%{s['accuracy'] * 100:.0f} isabet ({s['accuracy_count']})"
+        else:
+            # Kanal Finans makes no 15-minute directional calls, so there is
+            # nothing to score -- that's different from "we have no data yet".
+            acc_text = "isabet ölçülmüyor" if strategy == KANAL_FINANS else "isabet: veri yok"
         today_pct = (s["value_now"] - s["value_start"]) / s["value_start"] * 100 if s["value_start"] else 0.0
         total_pct = (s["value_now"] - trading.STARTING_CASH) / trading.STARTING_CASH * 100
         lines.append(
@@ -213,6 +331,24 @@ def render_text(report: dict) -> str:
         lines.append(f"- Bugün {report['end'].strftime('%H:%M')}: ${report['price_now']:.4f} ({price_change_pct:+.2f}%)")
     else:
         lines.append(f"- Önceki fiyat verisi yok, güncel: ${report['price_now']:.4f}")
+
+    kf = report.get("kanal_finans")
+    if kf is not None:
+        lines += ["", "KANAL FİNANS TŞ (Tunç Şatıroğlu'nun söyledikleri -- bizim tahminimiz değil)"]
+        lines.append(f"- Bugün işlenen video: {kf['new_videos']} ({kf['mention_count']} kripto bahsi)")
+        latest = kf["latest_xrp"]
+        if latest is not None:
+            published = _published_label(latest.get("published_at"))
+            stance = STANCE_LABELS.get(latest["stance"], latest["stance"])
+            action = ACTION_LABELS.get(latest.get("action"), "—")
+            lines.append(f"- XRP görüşü ({published}): {stance} / {action} -- {latest['summary']}")
+            lines.append(f"  Video: {latest.get('video_title') or '-'}")
+        else:
+            lines.append("- Henüz XRP hakkında bir görüş kaydedilmedi")
+        lines.append(f"- İzlenen seviyeler: {_level_text(kf['stop_loss_price'], 'zarar-kes')} | "
+                     f"{_level_text(kf['resistance_price'], 'direnç')} (direnç otomatik satış tetiklemez)")
+        for m in kf["other_assets"]:
+            lines.append(f"- {m['asset']}: {STANCE_LABELS.get(m['stance'], m['stance'])} -- {m['summary']}")
 
     w = report["weights"]
     lines += ["", "GÜNCEL ENSEMBLE AĞIRLIKLARI"]
@@ -250,10 +386,12 @@ def _pct_span(pct: float) -> str:
 
 
 def _strategy_table(report: dict) -> str:
-    """5-column comparison table (one row per strategy) -- accuracy next to
-    real fee-inclusive portfolio return, since they can diverge (an
-    "accurate" strategy can still lose money to fees, as backtests have
-    shown for technical/whale)."""
+    """One row per paper portfolio -- accuracy next to real fee-inclusive
+    portfolio return, since they can diverge (an "accurate" strategy can
+    still lose money to fees, as backtests have shown for technical/whale).
+    Kanal Finans TŞ is listed here too: it makes no directional calls so its
+    accuracy cell stays empty, but "what did $1000 become" is the one axis on
+    which all seven portfolios are directly comparable."""
     headers = ("Strateji", "İsabet", "Değer", "Bugün", "Toplam", "İşlem")
     header_html = "".join(
         f'<th style="padding:8px 10px;font-size:11px;color:{MUTED};text-align:left;'
@@ -263,7 +401,8 @@ def _strategy_table(report: dict) -> str:
 
     body_rows = []
     best_name, best_pct = None, float("-inf")
-    for strategy in ("ensemble", *trading.STRATEGIES):
+    present = [s for s in REPORT_STRATEGIES if s in report["strategies"]]
+    for strategy in present:
         s = report["strategies"][strategy]
         label = STRATEGY_LABELS[strategy]
         acc_html = f'%{s["accuracy"] * 100:.0f} <span style="color:{MUTED};">({s["accuracy_count"]})</span>' if s["accuracy"] is not None else f'<span style="color:{MUTED};">—</span>'
@@ -292,10 +431,61 @@ def _strategy_table(report: dict) -> str:
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="background:{CARD};border-radius:10px;overflow:hidden;margin:0 0 14px;border:1px solid {BORDER};">'
         f'<tr><td colspan="6" style="padding:10px 16px;background:{CARD_HEAD};'
-        f'font-size:12px;font-weight:700;letter-spacing:.04em;color:{TEXT};">📊 5 STRATEJİ PERFORMANSI '
+        f'font-size:12px;font-weight:700;letter-spacing:.04em;color:{TEXT};">📊 {len(present)} PORTFÖY PERFORMANSI '
         f'<span style="font-weight:400;color:{MUTED};">(her biri kendi $1000 ile)</span></td></tr>'
         f'<tr>{header_html}</tr>{"".join(body_rows)}{note}</table>'
     )
+
+
+def _kanal_finans_card(kf: dict) -> str:
+    """What the speaker said, not what we predict -- so it gets its own card
+    with Turkish stance wording rather than being folded into the ensemble's
+    UP/DOWN vocabulary (same separation the UI makes)."""
+    rows = [_row("Bugün işlenen video", f"{kf['new_videos']} <span style=\"color:{MUTED};\">({kf['mention_count']} kripto bahsi)</span>")]
+
+    latest = kf["latest_xrp"]
+    if latest is not None:
+        stance = STANCE_LABELS.get(latest["stance"], latest["stance"])
+        stance_color = {"UP": UP, "DOWN": DOWN}.get(latest["stance"], MUTED)
+        action = ACTION_LABELS.get(latest.get("action"), "—")
+        rows.append(_row(
+            f"XRP görüşü <span style=\"color:{MUTED};\">({_published_label(latest.get('published_at'))})</span>",
+            f'<span style="color:{stance_color};font-weight:600;">{stance}</span> '
+            f'<span style="color:{MUTED};">/ {action}</span>',
+        ))
+        rows.append(
+            f'<tr><td colspan="2" style="padding:2px 16px 10px;font-size:12px;color:{TEXT};line-height:1.45;">'
+            f'{latest["summary"]}<div style="color:{MUTED};font-size:11px;margin-top:4px;">'
+            f'{latest.get("video_title") or ""}</div></td></tr>'
+        )
+    else:
+        rows.append(_row("XRP görüşü", f'<span style="color:{MUTED};">henüz yok</span>'))
+
+    rows.append(_row(
+        "İzlenen seviyeler",
+        f'{_level_text(kf["stop_loss_price"], "Zarar-kes")} '
+        f'<span style="color:{MUTED};">·</span> {_level_text(kf["resistance_price"], "direnç")}',
+    ))
+    # Only the stop-loss auto-trades; a resistance break is shown but never
+    # acted on (see kanal_finans_trading.py -- he sometimes calls it bullish).
+    rows.append(
+        f'<tr><td colspan="2" style="padding:0 16px 10px;font-size:11px;color:{MUTED};">'
+        f'Direnç seviyesi otomatik satış tetiklemez, yalnızca bilgi amaçlıdır.</td></tr>'
+    )
+
+    for m in kf["other_assets"]:
+        stance = STANCE_LABELS.get(m["stance"], m["stance"])
+        stance_color = {"UP": UP, "DOWN": DOWN}.get(m["stance"], MUTED)
+        rows.append(_row(
+            m["asset"],
+            # The summary is a sentence, not a number -- left-align it even
+            # though _row()'s value column is right-aligned for figures.
+            f'<span style="color:{stance_color};font-weight:600;">{stance}</span>'
+            f'<div style="color:{MUTED};font-size:11px;margin-top:3px;text-align:left;line-height:1.4;">{m["summary"]}</div>',
+        ))
+
+    title = f'📺 KANAL FİNANS TŞ <span style="font-weight:400;color:{MUTED};">(Tunç Şatıroğlu\'nun görüşü)</span>'
+    return _card(title, rows)
 
 
 def render_html(report: dict) -> str:
@@ -338,9 +528,11 @@ def render_html(report: dict) -> str:
         ),
     )]
 
+    kf = report.get("kanal_finans")
     body = (
         _card("📊 TAHMİNLER", pred_rows)
         + _strategy_table(report)
+        + (_kanal_finans_card(kf) if kf is not None else "")
         + _card("💹 XRP/USDT FİYATI", price_rows)
         + _card("⚖️ ENSEMBLE AĞIRLIKLARI", weight_rows)
     )

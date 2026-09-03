@@ -277,6 +277,21 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   fiyatını da `predictions` tablosundaki en yakın çözülmüş tahminin
   `price_at_resolution`'ından yeniden inşa eder. Gmail App Password ile
   `smtplib` üzerinden gönderir (ek pip bağımlılığı yok).
+  Mailde ayrı bir **Kanal Finans TŞ kartı** da var (`_kanal_finans_card`,
+  `kanal_finans_context`). İki farklı soruyu iki farklı sorguyla yanıtlar:
+  "bugün ne geldi" `created_at`'e göre (bizim işlediğimiz an — YouTube
+  engeli bir gün koşuyu bloklayıp ertesi gün telafi ederse mail onu
+  gerçekten geldiği gün raporlar), "XRP'de güncel görüş ne" ise tarihten
+  bağımsız olarak **en son XRP mention'ı**. İkincisi şart: kanal her gün
+  video atmıyor ve yerel görev makine uykudayken atlanıyor, yani yeni video
+  olmayan bir günde portföyün hâlâ üzerinde işlem yaptığı görüş bir önceki
+  videonunki. Sadece pencereye bakan bir kart o günlerde "bugün bir şey yok"
+  deyip hiçbir bilgi taşımazdı. XRP dışı (BTC/ETH/KRIPTO) bahislerden
+  **sadece en son videonunkiler** basılır — ilk backfill koşusu tüm arşivi
+  aynı `created_at`'e yazdığı için (ve engel sonrası birikmiş bir gün de
+  aynısını yapabilir) filtresiz hali maile 37 satır eski özet dolduruyordu.
+  Bölümün tamamı fail-soft: kanal finans tabloları yoksa/Supabase hıçkırırsa
+  kart düşer, mailin geri kalanı yine gider.
 
 - **Altı bağımsız $1000 kağıt-portföy** (`trading.py`): orijinal ensemble
   portföyü (`portfolio_state`/`trades`, id=1, hiç değişmedi) artı beş
@@ -331,11 +346,16 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   korunur (tam sayfa yenilemesinde sıfırlanır, kalıcı değil). Hangi
   `predictions` kolonlarının okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı,
   yeni bir strateji eklemek istersen önce oraya bir giriş eklemen yeterli.
-  `daily_report.py`'daki günlük mail de aynı 6 portföyü (ensemble + 5
-  tekil, isabet + gerçek — komisyon dahil — portföy getirisi yan yana)
-  `_strategy_table()` ile ayrı bir tabloda gösterir; ikisi de aynı
+  `daily_report.py`'daki günlük mail de aynı portföyleri (ensemble + 5
+  tekil + Kanal Finans TŞ = 7 satır, isabet + gerçek — komisyon dahil —
+  portföy getirisi yan yana) `_strategy_table()` ile ayrı bir tabloda
+  gösterir; ikisi de aynı
   `trading.get_portfolio_state(db, strategy)`/`strategy_trades`
   verisinden besleniyor, birbirinden bağımsız hesap yapmıyor.
+  Kanal Finans o tabloda `trading.STRATEGIES`'in bir üyesi olarak değil,
+  `daily_report.REPORT_STRATEGIES`+`KANAL_FINANS` sabitiyle ayrıca ekli
+  (kendi tabloları, kendi karar motoru var) — isabet hücresi bilerek boş,
+  çünkü 15 dakikalık yön çağrısı üretmiyor; puanlanacak bir şey yok.
   **Panel kâr/zarar rozeti** (`.strategy-portfolio .direction`, sağ üstteki
   yeşil/kırmızı `%`/`$` etiketi): tıklanınca tüm panellerde aynı anda
   dolar ↔ yüzde arasında geçiş yapar (`setupPnlToggle`, tek global
