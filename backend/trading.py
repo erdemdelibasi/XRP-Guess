@@ -64,6 +64,23 @@ STOP_LOSS_COOLDOWN_CANDLES = 40        # ~10h at 15-min candles -- no re-entry f
                                         # (see module docstring: without this, re-entry gets stopped out again almost every time)
 
 
+def min_confidence_to_open_position() -> float:
+    """Lowest confidence that can actually open a position starting from all
+    cash. Not a knob -- it falls out of the three constants above: a flat
+    portfolio's drift from target equals the target allocation itself, so a
+    BUY needs _target_allocation(...) > REBALANCE_THRESHOLD.
+
+    Worth naming even though nothing needs it to trade, because it is the
+    number that decides whether a strategy trades *at all*, and it was
+    invisible in the code. Measured 2026-09-03: calibration.py's technical
+    calibrator had a ceiling of 0.0693 against this threshold's 0.0735, so
+    the technical strategy was frozen -- no error, no log line, just a
+    portfolio that quietly stopped trading. retrain.py now compares the two
+    every day and says so out loud.
+    """
+    return REBALANCE_THRESHOLD * CONFIDENCE_FOR_MAX_ALLOCATION / MAX_ALLOCATION
+
+
 def _state_table(strategy: str) -> str:
     return "portfolio_state" if strategy == "ensemble" else "strategy_portfolios"
 

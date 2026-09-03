@@ -16,6 +16,7 @@ import ensemble
 from fetch_data import get_klines_history
 from indicators import add_cross_asset_correlation, add_indicator_columns, technical_signal
 import ml_model
+import trading
 
 SYMBOL = "XRPUSDT"
 BTC_SYMBOL = "BTCUSDT"
@@ -168,6 +169,38 @@ def fit_calibration(xrp_raw, btc_raw, eth_raw) -> dict:
     return calibrators
 
 
+def report_calibration_ceilings(calibrators: dict) -> None:
+    """Says out loud whether a freshly-fitted calibrator can still produce a
+    confidence high enough to open a position at all.
+
+    Calibration caps a component's confidence at whatever accuracy its history
+    actually supports, and that cap moves every day as this refit runs. When it
+    lands below trading.min_confidence_to_open_position(), that component's
+    single-signal portfolio silently stops trading -- no exception, no warning,
+    just a flat portfolio that looks like a strategy which never sees an
+    opportunity. Exactly that happened to `technical` (ceiling 0.0693 against
+    a 0.0735 threshold) and it took a parameter sweep to notice.
+
+    This is a diagnostic only. It deliberately does NOT adjust anything: a
+    ceiling below the threshold usually means the signal's measured edge
+    doesn't cover round-trip fees, and forcing trades in that state was
+    measured (60-day backtest, 2026-09-03) to make every outcome worse.
+    """
+    threshold = trading.min_confidence_to_open_position()
+    print(f"Calibration ceiling check (position opens above confidence {threshold:.4f}):")
+    for component, reg in sorted(calibrators.items()):
+        # out_of_bounds="clip" means predicting past the fitted domain returns
+        # the curve's top value -- i.e. the highest P(correct) it can ever say.
+        p_max = float(reg.predict([1.0])[0])
+        ceiling = max((p_max - 0.5) * 2, 0.0)
+        if ceiling > threshold:
+            print(f"  {component}: ceiling {ceiling:.4f} -- can trade")
+        else:
+            print(f"  WARNING: {component} ceiling {ceiling:.4f} is BELOW {threshold:.4f} -- "
+                  f"this strategy cannot open a position until its measured accuracy improves "
+                  f"(max P(correct)={p_max:.3f}). Not an error; see trading.min_confidence_to_open_position().")
+
+
 def main() -> int:
     db = get_client()
 
@@ -190,6 +223,7 @@ def main() -> int:
         merged.update(calibrators)
         calibration.save(merged)
         print(f"Calibration refit complete for: {list(calibrators)}")
+        report_calibration_ceilings(merged)
 
     records = rolling_records(db)
     # These weights are for display only -- ensemble.combine() pools on the

@@ -55,6 +55,38 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   ölç — `REBALANCE_THRESHOLD` ilk denemede %10 iken backtest'te aşırı
   komisyon erozyonuna yol açtığı görülüp %25'e çıkarıldı, sezgiyle değil
   ölçümle karar verildi.
+  **`CONFIDENCE_FOR_MAX_ALLOCATION`'ı düşürmek 2026-09-03'te denenip
+  reddedildi.** Belirti gerçekti: `technical` haftalardır neredeyse hiç işlem
+  açmıyordu. Sebep de gerçek — bu üç sabitten türeyen, o güne kadar kodda
+  hiçbir yerde yazılı olmayan bir eşik var (artık
+  `trading.min_confidence_to_open_position()`): nakitten pozisyon açmak için
+  güven > `REBALANCE_THRESHOLD × CONFIDENCE_FOR_MAX_ALLOCATION /
+  MAX_ALLOCATION` = **0.0735** olmalı, ama `calibration.py`'nin o günkü
+  `technical` kalibratörünün TAVANI 0.0693'tü (ml'inki 0.0667). Yani strateji
+  sessizce donmuştu — hata yok, log yok, sadece işlem yapmayan bir portföy.
+  Sabit 0.25 → 0.10 yapmak eşiği 0.0294'e indirip sorunu "çözüyor" gibi
+  görünüyordu ve 3 günlük canlı veride `technical` +%0.50 → +%0.90 ile
+  doğruluyordu. **Ama o pencerede XRP +%1.45 yükselmişti** — yükselen
+  piyasada pozisyonları büyütmek her zaman iyi görünür. 60 günlük backtest
+  (5799 adım, iki yön de var) tam tersini söyledi ve dört ölçütte birden,
+  monoton olarak kötüleşme gösterdi: ensemble −%18.7 → −%26.5, sadece
+  technical −%15.5 → −%25.6, komisyon $166 → $224, stop-loss sayısı 31 → 91,
+  maks düşüş %15.9 → %25.7. Aynı `REBALANCE_THRESHOLD` dersinin tekrarı.
+  Asıl bulgu şu: aynı pencerede al-ve-tut +%22.4 yaparken hiçbir parametre
+  değerinde strateji pozitife bile geçmiyor — yani **`technical`'ın işlem
+  yapmaması arıza değil, kalibrasyonun doğru çalışması.** Sinyalin ölçülen
+  avantajı (kalibre P(doğru) ≈ %53.5) gidiş-dönüş komisyonunu (%0.2)
+  aşmıyor; parametreyi zorlayarak işlem açtırmak, avantajı olmayan bir
+  sinyale daha çok komisyon ödetmek oluyor. **Bir stratejinin sessizliğini
+  gördüğünde önce bunu düşün.** `retrain.py:report_calibration_ceilings`
+  her gün kalibratör tavanını bu eşikle karşılaştırıp log'a basıyor, ki
+  bir daha bir strateji sessizce donmasın.
+  Not: ensemble ile tekil bileşenlerin güven ölçekleri aynı değil (canlı
+  medyan: ensemble 0.0863, technical 0.0185, ml 0.0378) — ensemble log-odds
+  havuzundan geliyor ve medyanı zaten eşiğin üstünde. Yani tek global sabit
+  4-5 kat farklı iki ölçeğe hizmet ediyor; ölçüm strateji-başına sabiti de
+  desteklemedi (technical için de düşürmek uzun pencerede kötü), ama ölçek
+  uyumsuzluğu duruyor — ileride bir şey değiştireceksen bunu bil.
 - `backend/backtest.py` (`workflow_dispatch`, cron yok) sadece
   technical+ML'i test eder — whale/news/orderbook canlı-only. İlk ~83
   günlük çalıştırma dürüst ama çarpıcı bir sonuç verdi: %49 yön isabeti
