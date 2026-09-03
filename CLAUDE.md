@@ -424,7 +424,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   çıkarım şeması artık her XRP mention'ı için (diğer varlıklar için hep
   action=HOLD, stop/direnç=0) `action`/`stop_loss_price`/`resistance_price`
   de döndürüyor (0 = "bahsedilmedi" sentinel, `claude_signal.py`'deki gibi
-  bu json_schema dialect'i nullable desteklemediği için). Yeni bir mention
+  bu json_schema dialect'i nullable desteklemediği için).
+  **Birden fazla seviye verildiğinde hangi ucun alınacağı prompt'ta açıkça
+  yazılıdır ve bu ikisi için TERS yönlerdir** — zarar-keste EN YÜKSEK
+  (fiyat düşerken oraya önce değer), dirençte EN DÜŞÜK (fiyat yükselirken
+  oraya önce değer). Eskiden prompt sadece "daha temkinli / pozisyonu daha
+  erken kapatan ucu kullan" diyordu; "temkinli" kelimesi bu iki alan için
+  zıt yönleri işaret ettiği için model karıştırdı: Tunç'un "1.37/1.3450
+  altına düşerse zarar kes" cümlesinden 1.345'i çıkardı (doğrusu 1.37 —
+  gerçek bir pozisyonda ~%1.8 fazla zarar demek). 2026-09-03'te her iki
+  alan için yön ve karşı-örnek açıkça yazılarak düzeltildi, aynı cümleyle
+  test edilip 1.37/1.41 verdiği doğrulandı; canlıdaki yanlış değer de
+  (mention satırı + portföyün izlediği seviye) elle düzeltildi. Yeni bir
+  mention
   gelince (`kanal_finans.py:main()`, o anki canlı fiyatla) `apply_mention_decision`
   BUY/SELL uygular; bir sonraki mention'da yeni bir seviye verilmemişse
   **önceki izlenen zarar-kes/direnç seviyesi korunur** (Tunç her videoda

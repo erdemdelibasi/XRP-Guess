@@ -74,9 +74,14 @@ SYSTEM_PROMPT = (
     "(action=SELL), yoksa 'tut/bekle/degisiklik yok' mu (action=HOLD) dedigini "
     "cikar. Eger belirtmisse zarar-kes/destek fiyat seviyesini "
     "(stop_loss_price) ve direnc/hedef fiyat seviyesini (resistance_price) "
-    "sayi olarak ver -- bir seviye aralik olarak verilmisse (orn. '1.37-1.46') "
-    "daha temkinli (pozisyonu daha erken kapatan) ucu kullan. Belirtilmemisse "
-    "her ikisi icin de 0 kullan (0 = 'bahsedilmedi', gercek bir fiyat degil)."
+    "sayi olarak ver. Birden fazla seviye ya da bir aralik verilmisse HER "
+    "IKISINDE DE 'once tetiklenecek olani' sec -- ama bu ikisi icin TERS "
+    "yonlerdir, dikkat et: stop_loss_price'ta EN YUKSEK degeri al (fiyat "
+    "DUSERKEN oraya once deger; orn. '1.37/1.3450 altina duserse zarar kes' "
+    "-> 1.37 ver, 1.345 DEGIL), resistance_price'ta EN DUSUK degeri al "
+    "(fiyat YUKSELIRKEN oraya once deger; orn. '1.41-1.46 direnc bolgesi' "
+    "-> 1.41 ver, 1.46 DEGIL). Belirtilmemisse her ikisi icin de 0 kullan "
+    "(0 = 'bahsedilmedi', gercek bir fiyat degil)."
 )
 
 RESPONSE_SCHEMA = {
