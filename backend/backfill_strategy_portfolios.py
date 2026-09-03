@@ -22,6 +22,7 @@ reproduces the same result instead of duplicating trades.
 import sys
 
 from db import get_client
+import ensemble
 import trading
 
 PAGE_SIZE = 1000
@@ -57,9 +58,17 @@ def replay(strategy: str, predictions: list[dict]) -> dict:
     cash, xrp, peak_value, cooldown = trading.STARTING_CASH, 0.0, trading.STARTING_CASH, 0
     trades = []
 
+    # A strategy's name is not always its column prefix: `technical` is stored
+    # as `tech_*` in the predictions table (ensemble.COLUMN_PREFIX). Building
+    # the column name straight from the strategy name silently found nothing
+    # for technical, so every row was skipped by the None-guard below and
+    # technical backfilled to a flat $1000 with zero trades -- looking like a
+    # strategy that had simply never traded rather than a lookup bug.
+    prefix = ensemble.COLUMN_PREFIX[strategy]
+
     for row in predictions:
-        direction = row.get(f"{strategy}_direction")
-        confidence = row.get(f"{strategy}_confidence")
+        direction = row.get(f"{prefix}_direction")
+        confidence = row.get(f"{prefix}_confidence")
         price = row.get("price_at_prediction")
         if direction is None or confidence is None or price is None:
             continue

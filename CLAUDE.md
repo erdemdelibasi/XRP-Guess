@@ -313,7 +313,14 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   sırayla `compute_rebalance()`'tan geçirip stratejileri sıfır yerine
   "gerçekte ne yapmış olacaklardı" durumuyla başlatır — idempotent (o
   stratejinin `strategy_trades` kayıtlarını silip yeniden yazar), tekrar
-  çalıştırmak güvenli (`claude` gibi geçmişi kısa/hiç olmayan bir strateji
+  çalıştırmak güvenli. **Kolon adını strateji adından kurma** —
+  `ensemble.COLUMN_PREFIX`'ten al: `technical` tabloda `tech_*` olarak
+  duruyor. 2026-09-03'e kadar `replay()` düz `f"{strategy}_direction"`
+  kuruyordu, `technical_direction` diye bir kolon olmadığı için her satır
+  None-guard'a takılıp atlanıyordu ve technical **sessizce** düz $1000 / 0
+  işlemle backfill oluyordu — hiç işlem yapmamış bir strateji gibi görünüyor,
+  hata gibi görünmüyordu. Düzeltildikten sonra aynı geçmiş 10 işlem /
+  +%0.52 veriyor (`claude` gibi geçmişi kısa/hiç olmayan bir strateji
   için bu no-op'a yakın olabilir, sorun değil). **Sıralama önemli**: şema
   migration'ı önce uygulanmalı, `predict.py` canlı işlem yapmaya
   başlamadan önce (ya da hemen sonra — idempotent olduğu için kritik
