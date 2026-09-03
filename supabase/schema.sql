@@ -60,12 +60,22 @@ create index if not exists predictions_created_at_idx on predictions (created_at
 create index if not exists predictions_target_time_idx on predictions (target_time);
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
 
+-- `weight` is display-only (the UI / daily mail "who matters how much" bar):
+-- ensemble.combine() pools components in log-odds space on their measured
+-- reliability, not on a weight -- see ensemble.py. `sample_size` is how many
+-- resolved, non-abstained predictions `rolling_accuracy` is computed from;
+-- combine() needs it to know how much evidence is behind an accuracy (an
+-- accuracy alone can't distinguish 6/10 from 600/1000).
 create table if not exists model_state (
   component        text primary key check (component in ('technical', 'ml', 'whale', 'news', 'orderbook', 'claude')),
   weight           numeric not null default 0.2,
   rolling_accuracy numeric,
+  sample_size      int not null default 0,
   updated_at       timestamptz not null default now()
 );
+
+-- Migration for an existing database (safe to re-run):
+--   alter table model_state add column if not exists sample_size int not null default 0;
 
 insert into model_state (component, weight) values
   ('technical', 0.24),

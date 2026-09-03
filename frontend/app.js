@@ -192,8 +192,14 @@ function renderWeightsSummary(predictions) {
       ["orderbook", latest.weight_orderbook],
       ["claude", latest.weight_claude],
     ].filter(([, v]) => v != null);
-    const pct = roundWeightsTo100(raw);
-    const parts = raw.map(([key]) => `${labels[key]}: %${pct[key]}`);
+    // Ağırlıklar işaretli gelir: negatif = o bileşen ölçülen geçmişinde
+    // sürekli yanılmış ve harmanda TERS okunuyor (bkz. backend/ensemble.py
+    // influence_weights). Payı büyük olabilir -- etkisi gerçek, ama yönü
+    // söylediğinin tersi. İşareti göstermezsek en çok yanılan bileşen
+    // listenin başında "en güvenilir" gibi görünür.
+    const pct = roundWeightsTo100(raw.map(([k, v]) => [k, Math.abs(v)]));
+    const parts = raw.map(([key, value]) =>
+      `${labels[key]}: %${pct[key]}${value < 0 ? " (ters)" : ""}`);
     weights.textContent = `Güncel ağırlıklar — ${parts.join(", ")}`;
   }
 }

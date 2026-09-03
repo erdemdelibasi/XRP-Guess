@@ -119,13 +119,30 @@ def resolve_due_predictions(db, current_price: float) -> None:
               f"predicted={row['predicted_direction']} actual={actual_direction} correct={correct}")
 
 
-def get_ensemble_weights(db) -> dict:
+def get_ensemble_state(db) -> tuple[dict, dict]:
+    """(display_weights, reliabilities) from model_state.
+
+    `reliabilities` is what ensemble.combine() actually pools on: each
+    component's live (correct, resolved) record, rebuilt from the stored
+    rolling_accuracy and sample_size. The weights are only carried along to
+    be logged on the prediction row and shown in the UI. A component with no
+    sample_size yet (column not migrated, or no history) is simply left out,
+    and combine() falls back to its cold-start path.
+    """
     res = db.table("model_state").select("*").execute()
     weights = dict(ensemble.DEFAULT_WEIGHTS)
+    reliabilities: dict[str, tuple[int, int]] = {}
     for row in res.data:
-        if row["component"] in ensemble.COMPONENTS and row["weight"] is not None:
-            weights[row["component"]] = float(row["weight"])
-    return weights
+        component = row["component"]
+        if component not in ensemble.COMPONENTS:
+            continue
+        if row.get("weight") is not None:
+            weights[component] = float(row["weight"])
+        total = row.get("sample_size") or 0
+        accuracy = row.get("rolling_accuracy")
+        if total > 0 and accuracy is not None:
+            reliabilities[component] = (round(float(accuracy) * int(total)), int(total))
+    return weights, reliabilities
 
 
 def safe_signal(fn, *args, label: str) -> dict:
@@ -189,9 +206,9 @@ def main() -> int:
     # claude_signal.py for why calibrated confidence isn't used here.
     claude = safe_signal(claude_signal_module.claude_signal, current_price, tech, whale, label="claude")
 
-    weights = get_ensemble_weights(db)
+    weights, reliabilities = get_ensemble_state(db)
     signals = {"technical": tech, "ml": ml, "whale": whale, "news": news, "orderbook": orderbook, "claude": claude}
-    final = ensemble.combine(signals, weights)
+    final = ensemble.combine(signals, weights, reliabilities)
 
     volatility = recent_volatility(xrp)
     tech_pct = estimate_pct_change(tech["score"], volatility)

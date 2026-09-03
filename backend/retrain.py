@@ -31,9 +31,10 @@ CALIBRATION_FEATURE_LIMIT = 400
 
 
 def _record(values: list[bool]) -> tuple[int, int] | None:
-    """(correct_count, total) for ensemble.recompute_weights, or None below
-    the minimum sample size. The count -- not just the ratio -- is what lets
-    recompute_weights tell a real edge from a lucky short run."""
+    """(correct_count, total), or None below the minimum sample size. The
+    count -- not just the ratio -- is what lets ensemble.combine() tell a real
+    edge from a lucky short run (it shrinks P(correct) toward 0.5 by sample
+    size), and what gets stored as model_state.sample_size."""
     if len(values) < MIN_RESOLVED_FOR_REWEIGHT:
         return None
     return sum(1 for v in values if v), len(values)
@@ -87,13 +88,27 @@ def rolling_records(db) -> dict[str, tuple[int, int] | None]:
     return records
 
 
-def upsert_weight(db, component: str, weight: float, accuracy: float | None) -> None:
-    db.table("model_state").upsert({
+def upsert_weight(db, component: str, weight: float, accuracy: float | None,
+                   sample_size: int) -> None:
+    """`sample_size` is what lets predict.py rebuild the (correct, total)
+    record ensemble.combine() pools on -- an accuracy alone can't say how much
+    evidence is behind it. Written best-effort: if the column hasn't been
+    added yet (see supabase/schema.sql), fall back to writing the rest rather
+    than failing the whole retrain."""
+    row = {
         "component": component,
         "weight": weight,
         "rolling_accuracy": accuracy,
+        "sample_size": sample_size,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    }
+    try:
+        db.table("model_state").upsert(row).execute()
+    except Exception as exc:  # noqa: BLE001 -- missing column shouldn't break the run
+        print(f"WARNING: upsert with sample_size failed for {component} ({exc}); "
+              "retrying without it -- run the model_state migration in supabase/schema.sql.")
+        row.pop("sample_size")
+        db.table("model_state").upsert(row).execute()
 
 
 def _trailing_window(df, end_idx: int, limit: int = CALIBRATION_FEATURE_LIMIT):
@@ -177,14 +192,18 @@ def main() -> int:
         print(f"Calibration refit complete for: {list(calibrators)}")
 
     records = rolling_records(db)
-    new_weights = ensemble.recompute_weights(records)
+    # These weights are for display only -- ensemble.combine() pools on the
+    # (correct, total) records themselves, not on a weight (see its docstring).
+    new_weights = ensemble.influence_weights(records)
 
     accuracies = {c: (records[c][0] / records[c][1] if records[c] else None)
                   for c in ensemble.COMPONENTS}
     for component in ensemble.COMPONENTS:
-        upsert_weight(db, component, new_weights[component], accuracies[component])
+        rec = records[component]
+        upsert_weight(db, component, new_weights[component], accuracies[component],
+                       rec[1] if rec else 0)
 
-    print(f"Updated ensemble weights: {new_weights} (accuracies={accuracies}, records={records})")
+    print(f"Updated ensemble influence: {new_weights} (accuracies={accuracies}, records={records})")
     return 0
 
 

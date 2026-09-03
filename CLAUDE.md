@@ -125,34 +125,55 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   tekrar oynatmak pahalı olurdu), bu yüzden `backend/backtest.py` sadece
   technical+ML'i test edebilir**, bu sınırlama backtest raporunda açıkça
   belirtilir.
-  Ağırlıklar `retrain.py` tarafından günlük olarak son 14 günlük başarı
-  oranına göre güncellenir (`model_state` tablosu). **Ağırlık, ham isabet
-  oranıyla değil, yazı-turaya göre *kanıtlanmış üstünlükle* orantılıdır**
-  (`ensemble.recompute_weights`, Wilson alt sınırı − 0.5). Eskiden ham
-  isabetle orantılıydı ve bu, "bu bileşen kötü" diyemiyordu: 2026-09-03'te
-  240 canlı tahminde `claude` %37 isabetle, `orderbook` %48 ile hâlâ ~%15
-  ağırlık alıyordu — en iyi bileşenden sadece ~3 puan az. Sonuç: yazı-turanın
-  altındaki beş bileşen, avantajı olan tek bileşeni rahatça oyluyordu ve
-  harman %46 yaparken en iyi tek bileşeni (`technical`) %58 yapıyordu.
-  İki bilinçli muhafazakârlık koruması var: (1) Wilson alt sınırı sayesinde
-  ince/şanslı bir sicil sıfır avantaj verir, hiçbir şey barajı geçmezse
-  varsayılanlar korunur (gürültüyü yetenek sanmamak için); (2) `MAX_WEIGHT`
-  (0.40) tek bir bileşenin harmanı ele geçirmesini engeller — bu koruma
-  olmasa mevcut veride `technical` 1.6 puanlık bir Wilson avantajıyla 0.80'e
-  fırlıyordu. **Bu ikisini kaldırma**: canlı geçmiş hâlâ kısa (~3 gün) ve
-  projenin çok daha büyük 20.000 mumluk backtest'i technical+ML'i %50'de
-  gösteriyor, yani bugünkü görünen avantajlar pekâlâ gürültü olabilir.
-  `recompute_weights` artık oran değil `(doğru_sayısı, toplam)` alır —
-  örneklem büyüklüğü olmadan Wilson hesaplanamaz. Ağırlıklar ham haliyle
+  **Bileşenler LOG-ODDS uzayında havuzlanır, güvenle-ağırlıklandırılmaz**
+  (`ensemble.combine`). Bu, 2026-09-03'te bulunan sistemik bir tasarım
+  hatasının düzeltmesidir: katkı `ağırlık × güven`di ama güven ölçekleri
+  karşılaştırılabilir değildi — `calibration.py` sadece `technical`/`ml`'e
+  uygulanıp onları sert şekilde büzerken, `whale`/`news`/`orderbook`/`claude`
+  5-10 kat büyük ham güvenleriyle kalıyordu. 242 canlı tahminde ölçülen
+  gerçek etki: whale %26.5, news %22.3, claude %18.1, orderbook %15.6,
+  ml %11.5 ve **technical sadece %6.0** — yani tek avantajlı bileşen (%57.4)
+  en kısık sesli, en kötüsü (whale, %42.6) en gürültülüydü. Sadece
+  ağırlıkları düzeltmek bunu ONARMAZ, çünkü baskın çarpan güvendi.
+  Log-odds havuzlaması bunu yapısal olarak çözer: her bileşen tek bir ölçeğe,
+  P(doğru)'ya girer. %50'deki bileşen tam olarak sıfır katkı verir; sürekli
+  YANILAN bileşen negatif katkı verir, yani **tersine çevrilir** — ters
+  korelasyonlu bir sinyal için matematiksel olarak doğru olan budur, sadece
+  ağırlığını kısmak değil. Bu yüzden ayrı bir isabet-bazlı ağırlık şemasına
+  gerek kalmadı (log-odds'un kendisi ağırlıktır) ve `recompute_weights`
+  kaldırıldı; yerine sadece gösterim için `influence_weights` var.
+  Ölçüm (yürüyen-ileri, örnekleme dışı, n=162): bu kural **%55.6**, eski
+  güvenle-ağırlıklı oy %42.0, sade çoğunluk %45.7, "her zaman DOWN" %53.1.
+  Katkıyı bileşenin beyan ettiği güvenle ölçeklemek de denendi, daha kötüydü
+  (%53.7) — beyan edilen güvenlerin bir şey ifade etmediğiyle tutarlı.
+  Üç sabit de seçilmedi, ölçüldü: `SHRINK_ALPHA` (30) P(doğru)'yu örneklem
+  boyutuna göre 0.5'e çeker, yani ince kanıt otomatik olarak susar ve sistem
+  veri biriktikçe kendi kendini düzeltir; `LOGODDS_CAP` (1.5) tek bir sicilin
+  havuzu ele geçirmesini önler; `CORRELATION_DAMPING` (0.7) bileşenler
+  bağımsız olmadığı için (technical/ml/orderbook hepsi fiyattan türer) naif
+  Bayes toplamının kanıtı çift saymasını düzeltir — sönümlemesiz havuz %58.0
+  iddia edip %55.6 teslim ediyordu, 0.7'de %55.7 iddia / %55.6 teslim, yani
+  kalibre. **Sönümleme yönü/isabeti DEĞİŞTİRMEZ**, sadece güvenin büyüklüğünü,
+  yani `trading.py`'nin pozisyon büyüklüğünü — saf bir bahis-boyutu
+  düzeltmesidir (maks pozisyona ulaşan oran %18'den %4'e iner, eski davranışa
+  yakın kalır). **Canlı geçmiş hâlâ kısa (~3 gün)** ve 20.000 mumluk backtest
+  technical+ML'i %50'de gösteriyor; şu an dört bileşen tersine çevrili
+  durumda, bu ince kanıta dayanıyor — birkaç hafta sonra sabitleri yeniden
+  ölç. `model_state.sample_size` bunun için eklendi (isabet oranı tek başına
+  6/10 ile 600/1000'i ayırt edemez); migration `supabase/schema.sql`'de.
+  Gösterim ağırlıkları **işaretlidir**: negatif = o bileşen tersine okunuyor,
+  `app.js` ve `daily_report.py` bunu "(ters)" diye gösterir — yoksa en çok
+  yanılan bileşen listenin başında "en güvenilir" gibi görünür. Ağırlıklar
+  mutlak değerce
   **her zaman** tam %100'e tamamlanır (float toplamı) — ekranda %100 etmiyormuş
   gibi görünüyorsa veri değil gösterim sorunudur: `app.js`'de her ağırlık
   bağımsız `Math.round`'lanıyordu, hem bu yüzden ~1 puan kayabiliyordu hem
   de `orderbook` gösterime hiç dahil değildi. `roundWeightsTo100()`
   (en-büyük-kalan yöntemi) ve `orderbook`'un eklenmesiyle düzeltildi.
-  `ensemble.recompute_weights`
-  her bileşeni **bağımsız** olarak günceller — bir bileşenin (ör. news)
-  henüz yeterli geçmişi yoksa sadece o bileşen varsayılan ağırlıkta kalır,
-  diğerlerinin kendi aralarında ayarlanmasını engellemez. `whale`/`news`/
+  `ensemble.influence_weights`
+  her bileşeni **bağımsız** olarak değerlendirir — bir bileşenin (ör. news)
+  henüz geçmişi yoksa sadece o dışarıda kalır, diğerlerini engellemez.
+  `whale`/`news`/
   `orderbook` sık sık "sessiz" (confidence=0) kalır — bu bir hata değil,
   `retrain.py` bu satırları isabet oranına dahil etmiyor (abstention). Yeni
   bir bileşen eklemek istersen `ensemble.COMPONENTS`+`COLUMN_PREFIX`'e
@@ -161,21 +182,23 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   uygulaman yeterli — `retrain.py`/`daily_report.py` tamamen bu listeler
   üzerinden döngü kurduğu için başka kod değişikliği gerekmez. **Ama
   `model_state` tablosunda geçici bir tutarsızlık penceresi var**:
-  `predict.py:get_ensemble_weights` `model_state`'teki satırları olduğu
+  `predict.py:get_ensemble_state` `model_state`'teki satırları olduğu
   gibi `DEFAULT_WEIGHTS` üzerine yazıyor, toplamın 1.0 olduğunu
-  doğrulamıyor. `claude` eklendiğinde (2026-09-02) tam bunun kanıtı
+  doğrulamıyor (bu artık sadece gösterimi etkiler — asıl karar
+  `reliabilities` üzerinden log-odds ile veriliyor). `claude` eklendiğinde
+  (2026-09-02) tam bunun kanıtı
   yaşandı: o sabahki `retrain.py` koşusu henüz sadece eski 5 bileşeni
   biliyordu ve onlar zaten kendi aralarında %100'e tamamlanacak şekilde
   yazılmıştı; `claude` satırı bundan saatler sonra (şema migration'ıyla
   birlikte, varsayılan 0.15 ile) ayrıca eklenince toplam %115'e çıktı —
   Supabase'e curl atıp doğrulandı, "Daily Model Retrain" workflow'u elle
   tetiklenerek düzeltildi (bir sonraki `retrain.py`, `COMPONENTS`'teki
-  **tüm** bileşenleri aynı anda `recompute_weights`'ten geçirip
+  **tüm** bileşenleri aynı anda `influence_weights`'ten geçirip
   `model_state`'e tutarlı, toplamı-1.0 bir set yazdığı için kendi kendine
   de düzelirdi). **İleride yeni bir bileşen daha eklersen**: eklendiği gün
   ile bir sonraki günlük retrain arasında ağırlık toplamı geçici olarak
   %100'ü aşabilir (ya da varsayılan yüzdesi kadar eksik kalabilir) —
-  bu beklenen bir geçiş durumudur, hemen "bug" deyip `get_ensemble_weights`
+  bu beklenen bir geçiş durumudur, hemen "bug" deyip `get_ensemble_state`
   içine normalize mantığı ekleme; istersen retrain workflow'unu elle
   tetikleyerek anında düzeltebilirsin.
   **`whale`/`news` canlı veride hep UP diyordu** (news 25/25, whale 24/27) —

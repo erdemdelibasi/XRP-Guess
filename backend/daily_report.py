@@ -17,7 +17,7 @@ from email.mime.text import MIMEText
 from db import get_client
 import ensemble
 from fetch_data import get_current_price
-from predict import SYMBOL, get_ensemble_weights
+from predict import SYMBOL, get_ensemble_state
 import trading
 
 TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
@@ -158,7 +158,7 @@ def build_report(db) -> dict:
         acc, count = components[strategy]
         strategies[strategy] = strategy_report(db, strategy, start, end, price_start, price_now, acc, count)
 
-    weights = get_ensemble_weights(db)
+    weights, _ = get_ensemble_state(db)  # rapor sadece gosterim ağırlıklarını kullanıyor
 
     return {
         "start": start, "end": end,
@@ -326,9 +326,16 @@ def render_html(report: dict) -> str:
         price_rows = [_row("Güncel", f"${report['price_now']:.4f} <span style=\"color:{MUTED};\">(önceki veri yok)</span>")]
 
     w = report["weights"]
+    # Negatif ağırlık = bileşen ölçülen geçmişinde sürekli yanılmış ve harmanda
+    # TERS okunuyor (bkz. ensemble.influence_weights). Etkisi gerçek, yönü
+    # söylediğinin tersi -- işareti göstermezsek en çok yanılan bileşen en
+    # güvenilir gibi görünür.
     weight_rows = [_row(
         "Dağılım",
-        " · ".join(f"{COMPONENT_LABELS[c]} %{w[c] * 100:.1f}" for c in ensemble.COMPONENTS),
+        " · ".join(
+            f"{COMPONENT_LABELS[c]} %{abs(w[c]) * 100:.1f}" + (" (ters)" if w[c] < 0 else "")
+            for c in ensemble.COMPONENTS
+        ),
     )]
 
     body = (
