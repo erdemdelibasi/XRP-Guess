@@ -415,7 +415,18 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `run_kanal_finans.ps1`, `backend/.env`'i (gitignore'da, `.env.example`
   şablonundan elle kopyalanır — GitHub Secrets'taki değerlerle aynı olmalı)
   okuyup ortam değişkeni olarak yükler ve çıktıyı `backend/logs/`'a
-  (gitignore'da) tarihli bir dosyaya yazar. Webshare erişimi ileride
+  (gitignore'da) tarihli bir dosyaya yazar. **Bu boru hattının iki ucu da
+  UTF-8'e zorlanmalı** ve bu kozmetik değil: Windows'ta yönlendirilmiş bir
+  stdout varsayılan olarak cp1252'dir, Türkçe bir video başlığını `print`
+  etmek `UnicodeEncodeError` ile TÜM koşuyu öldürür. 2026-09-03'te tam bu
+  oldu — zamanlanmış görev her koşuda kod 1 ile çıkıyor, log video ortasında
+  kesiliyor ve `record_failure()` hiç çalışmadığı için yeni kurulan
+  tekrar-deneme geri çekilmesi sessizce hiçbir şey kaydetmiyordu (tablo
+  boştu; sebebin migration olduğu sanıldı, değildi). İki ayrı yarısı var:
+  `kanal_finans.py` `sys.stdout.reconfigure(encoding="utf-8")` ile yazarken,
+  `run_kanal_finans.ps1` `[Console]::OutputEncoding`'i UTF-8 yapar — çünkü
+  PowerShell yerel bir programın çıktısını onunla ÇÖZER, cp1252 kalırsa
+  UTF-8 baytlar mojibake olur. Biri olmadan diğeri yetmez. Webshare erişimi ileride
   mümkün olursa `kanal_finans.yml`'e `schedule:` geri eklenip yerel görev
   kapatılabilir — dosya bu geçiş için bilerek silinmedi.
 

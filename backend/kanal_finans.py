@@ -31,6 +31,7 @@ turns a temporary block into a lasting one.
 """
 import json
 import os
+import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
@@ -43,6 +44,17 @@ from youtube_transcript_api.proxies import WebshareProxyConfig
 import db as db_module
 import kanal_finans_trading
 from fetch_data import get_current_price
+
+# Every video title this module prints is Turkish, and on Windows a redirected
+# stdout defaults to cp1252 -- which cannot encode 's' or 'g', so a single
+# print() of a title killed the whole run with UnicodeEncodeError. That was not
+# theoretical: on 2026-09-03 the scheduled task exited 1 on every run, the log
+# cut off mid-video, and record_failure() below never got to run, so the retry
+# backoff silently recorded nothing at all. Forcing UTF-8 here (rather than only
+# in run_kanal_finans.ps1) keeps the script correct however it is invoked.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 CHANNEL_ID = "UCGBytjbMXiF1nbe6HD7iORQ"  # resolved once from youtube.com/@KanalFinans's canonical link; stable even if the handle changes
 RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id=" + CHANNEL_ID

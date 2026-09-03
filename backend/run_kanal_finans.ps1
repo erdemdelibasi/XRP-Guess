@@ -26,4 +26,15 @@ $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 # redirection operatorleri (*>>, >>) varsayilan olarak UTF-16LE yaziyor, bu da
 # UTF-8 bekleyen araclarla (Read tool, grep, vs.) acilinca Turkce karakterlerin
 # arasina bosluk giren okunmaz bir log uretiyordu.
-& $python (Join-Path $PSScriptRoot "kanal_finans.py") 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+#
+# Bu satir isin OTEKI yarisi: kanal_finans.py artik stdout'u UTF-8'e zorluyor
+# (bkz. oradaki yorum), ama PowerShell yerel bir programin ciktisini
+# [Console]::OutputEncoding ile COZUYOR -- o da cp1252 kaldigi surece UTF-8
+# baytlar mojibake'e donusurdu. Iki taraf da UTF-8 olmali.
+$previousOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+try {
+    & $python (Join-Path $PSScriptRoot "kanal_finans.py") 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+} finally {
+    [Console]::OutputEncoding = $previousOutputEncoding
+}
