@@ -101,6 +101,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   arttıkça isabet düşüyor" gibi sahte bir ters-ilişki gördük, büyük
   pencerede kayboldu), o yüzden kalibrasyonla ilgili bir sonucu asla tek
   bir küçük backtest koşusuna dayandırma.
+  **Maliyet stres testi** (`SLIPPAGE_SCENARIOS_BPS`, 2026-09-04): eskiden
+  tek bir `FEE_RATE` (borsa komisyonu) dışında maliyet varsayılmıyordu.
+  Artık aynı sinyal yolu (`_compute_signal_path`, teknik+ML çağrıları bir
+  kez hesaplanıp önbelleğe alınır — üç senaryo için 3x tekrar hesaplanmaz)
+  üç farklı gerçekleşme-fiyatı varsayımıyla tekrar oynatılıyor
+  (`_simulate_portfolio`): baz (sadece %0.10 komisyon), orta (+5 bps) ve
+  yüksek (+15 bps) spread/slippage stresi. Portföy durumu (cash/xrp/
+  peak_value) adımlar arası taşındığı için (kötü bir dolgu bir sonraki
+  kararı da değiştirebilir) bu ikinci geçiş her senaryo için ayrı ayrı
+  çalışır; sinyal yolu değişmediği için sadece bir kez hesaplanır. Sabit
+  bps varsayımı gerçek emir defteri derinliğinin yerini tutmaz — bir
+  hassasiyet kontrolü ("ölçülen avantaj daha kötü bir dolgudan sağ çıkıyor
+  mu"), kesin bir maliyet modeli değil.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
 - **Bir tahmin, hedef anındaki gerçek fiyata göre çözülür** — çözümleyicinin
@@ -116,6 +129,33 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   çözüldü. **Bu veri `retrain.py`'nin rolling accuracy'sini ve oradan ensemble
   ağırlıklarını besliyor** — yani ölçüm hatası doğrudan öğrenme döngüsünü
   bozuyordu. Buraya tekrar canlı fiyat koyma.
+- **Tahmin satırları idempotent** (2026-09-04): `predictions` tablosunda artık
+  `unique (symbol, target_time)` var (`supabase/schema.sql` — mevcut bir
+  veritabanında bu, dosyadaki migration yorumuyla elle uygulanmalı).
+  `predict.py:main` pahalı hiçbir işe (sinyal hesaplama, altı
+  `maybe_trade()` çağrısı) girmeden önce bu (symbol, target_time) için
+  zaten bir satır var mı diye bakıp varsa günlüğe yazıp `return 0` yapıyor.
+  Bunun için var olan bir hata değil, önlenen bir hata sınıfı: manuel bir
+  "Run workflow" zamanlanmış cron'la çakışsaydı (ya da bir adım retry
+  edilseydi) aynı çeyrek-saat için iki satır yazılır, her ikisi bağımsız
+  çözümlenip `retrain.py`'nin rolling accuracy'sini (ve oradan ensemble
+  ağırlıklarını) sessizce çift sayardı — tam yukarıdaki gecikmeli-çözüm
+  hatasının bir başka türü — ÜSTELİK her portföyün `maybe_trade()`'i de
+  aynı sinyal için iki kez ateşlenirdi. Constraint DB seviyesinde son çare;
+  asıl davranışı belirleyen ön kontrol.
+  **Migration ilk denemede canlı veritabanında patladı**: düz
+  `delete ... where a.id > b.id` `trades_triggered_by_prediction_id_fkey`'i
+  ihlal etti (`still referenced from table trades`) — yani prodüksiyonda
+  gerçekten duplicate bir prediction satırı vardı VE üzerinden gerçek bir
+  işlem geçmişti (`maybe_trade()` o duplicate'i tetiklemiş), bu da ön
+  kontrolün neden var olduğunun canlı kanıtı. Silmeden önce
+  `trades`/`strategy_trades.triggered_by_prediction_id`'yi hayatta kalacak
+  (grup içindeki en düşük id) satıra taşıyan iki `update ... from` bloğu
+  eklendi — `min(id) over (partition by symbol, target_time)` kullanıyor,
+  `a.id > b.id` self-join'i değil, çünkü 3+ duplicate'li bir grupta
+  self-join bir ara id'ye yönlendirip onu da silinecek satırlardan
+  yapabilirdi (aynı FK hatasını bir adım sonra tekrar üretir). Güncel
+  migration metni `schema.sql`'de.
 - Yön sinyali altı bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
   ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag +
   taker buy ratio dahil), ML model (`ml_model.py`, aynı taker buy ratio bir
@@ -657,6 +697,20 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   önce bunu dene.
 - Workflow'ları manuel tetiklemek için: GitHub repo → Actions →
   ilgili workflow → "Run workflow".
+- **Testler** (`backend/tests/`, pytest): DB'siz saf karar fonksiyonlarını
+  (`trading.compute_rebalance`, `kanal_finans_trading.decide_on_mention`/
+  `check_stop_loss`, `predict.price_at_target`) kapsıyor — canlı sinyal
+  üreten kodun (Binance/Supabase/Claude'a bağlı kısımlar) testi yok, o
+  zaten backtest.py + canlı izlemeyle doğrulanıyor. `backend/tests/
+  conftest.py` backend/'i sys.path'e ekliyor, o yüzden pytest repo
+  kökünden veya backend/ içinden fark etmeksizin çalışır: `cd backend &&
+  python -m pytest tests/ -v`. `.github/workflows/tests.yml` her
+  `backend/**` push/PR'ında otomatik çalıştırır (secret gerekmez — hiçbir
+  test gerçek Supabase/Binance/Anthropic'e dokunmuyor). Yeni bir saf karar
+  fonksiyonu eklersen (ör. `momentum_trading.compute_decision`) buraya
+  test eklemek ucuz ve CLAUDE.md'de "ölçüldü" diye anlatılan davranışları
+  (peak_value hiç düşmez, cooldown engelleniyor, REBALANCE_THRESHOLD ölü
+  bölgesi gibi) bir daha sessizce kırılmaktan korur.
 
 ## Ton / dil
 

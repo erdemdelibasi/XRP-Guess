@@ -165,9 +165,29 @@ def build_features(symbol: str):
 def main() -> int:
     db = get_client()
     now = datetime.now(timezone.utc)
+    target_time = next_quarter_hour(now)
 
     current_price = get_current_price(SYMBOL)
     resolve_due_predictions(db, current_price)
+
+    # Idempotency guard: a manual "Run workflow" overlapping the scheduled
+    # cron (or a retried step) would otherwise produce a second prediction
+    # row for the same quarter-hour, double-counting it in retrain.py's
+    # rolling accuracy and firing every portfolio's maybe_trade() twice for
+    # what looks like two independent signals. The unique(symbol, target_time)
+    # constraint in supabase/schema.sql is the last-resort backstop for a
+    # genuine race; this check is what makes the common case (a rerun) a
+    # cheap no-op instead of relying on that constraint to reject the insert.
+    existing = (
+        db.table("predictions")
+        .select("id")
+        .eq("symbol", SYMBOL)
+        .eq("target_time", target_time.isoformat())
+        .execute()
+    )
+    if existing.data:
+        print(f"Prediction for {target_time.isoformat()} already exists (id={existing.data[0]['id']}) -- skipping duplicate run.")
+        return 0
 
     xrp = build_features(SYMBOL)
     btc = get_klines(BTC_SYMBOL, interval=INTERVAL, limit=FEATURE_LIMIT)
@@ -219,8 +239,6 @@ def main() -> int:
     orderbook_pct = estimate_pct_change(orderbook["score"], volatility)
     claude_pct = estimate_pct_change(claude["score"], volatility)
     final_pct = estimate_pct_change(final["score"], volatility)
-
-    target_time = next_quarter_hour(now)
 
     prediction_row = {
         "symbol": SYMBOL,

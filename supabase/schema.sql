@@ -57,12 +57,58 @@ create table if not exists predictions (
   whale_correct         boolean,
   news_correct          boolean,
   orderbook_correct     boolean,
-  claude_correct        boolean
+  claude_correct        boolean,
+
+  -- predict.py checks for an existing row at this (symbol, target_time)
+  -- before doing any work; this is the DB-level backstop for the rare case
+  -- of two runs landing on the same target concurrently (e.g. a manual
+  -- "Run workflow" overlapping the scheduled cron) -- without it, a
+  -- duplicate row double-counts that quarter-hour in retrain.py's rolling
+  -- accuracy (which feeds the ensemble weights) and maybe_trade() fires
+  -- twice for what looks like two separate signals.
+  unique (symbol, target_time)
 );
 
 create index if not exists predictions_created_at_idx on predictions (created_at desc);
 create index if not exists predictions_target_time_idx on predictions (target_time);
 create index if not exists predictions_unresolved_idx on predictions (resolved_at) where resolved_at is null;
+
+-- Migration for an existing database (safe to re-run): dedupe any rows that
+-- already share a (symbol, target_time) before the constraint can be added
+-- (keeps the lowest id -- the first one written -- per group). trades/
+-- strategy_trades.triggered_by_prediction_id can point at a row that's
+-- about to be deleted (a real trade fired off a duplicate, not necessarily
+-- the first one written) -- deleting straight away hits
+-- "violates foreign key constraint ... still referenced from table trades",
+-- so repoint those references at the surviving (lowest-id) row first. Uses
+-- min(id) over (partition by ...), not a self-join on "id > id", so a
+-- group with 3+ duplicates repoints everything at the true minimum in one
+-- pass instead of possibly landing on an id that itself gets deleted next.
+--   with groups as (
+--     select id, symbol, target_time,
+--            min(id) over (partition by symbol, target_time) as kept_id
+--     from predictions
+--     where target_time is not null
+--   ), dupes as (
+--     select id as dup_id, kept_id from groups where id <> kept_id
+--   )
+--   update trades t set triggered_by_prediction_id = d.kept_id
+--     from dupes d where t.triggered_by_prediction_id = d.dup_id;
+--   with groups as (
+--     select id, symbol, target_time,
+--            min(id) over (partition by symbol, target_time) as kept_id
+--     from predictions
+--     where target_time is not null
+--   ), dupes as (
+--     select id as dup_id, kept_id from groups where id <> kept_id
+--   )
+--   update strategy_trades t set triggered_by_prediction_id = d.kept_id
+--     from dupes d where t.triggered_by_prediction_id = d.dup_id;
+--   delete from predictions a using predictions b
+--     where a.symbol = b.symbol and a.target_time = b.target_time
+--       and a.target_time is not null and a.id > b.id;
+--   alter table predictions add constraint predictions_symbol_target_time_key
+--     unique (symbol, target_time);
 
 -- `weight` is display-only (the UI / daily mail "who matters how much" bar):
 -- ensemble.combine() pools components in log-odds space on their measured

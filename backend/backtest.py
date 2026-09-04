@@ -14,6 +14,11 @@ IMPORTANT LIMITATIONS (also printed in the report, not hidden):
   rolling retraining loop is not replayed here.
 - Ensemble weights are fixed at 50/50 rather than the real self-adjusting
   trajectory retrain.py would have produced day by day.
+- The cost stress test below (SLIPPAGE_SCENARIOS_BPS) adds a flat extra bps
+  to every fill's execution price to approximate bid-ask spread + slippage
+  beyond trading.FEE_RATE's exchange commission. It's a fixed-percentage
+  guess, not real order-book depth/volume -- treat it as a sensitivity
+  check ("does the edge survive a worse fill"), not a precise cost model.
 """
 import math
 import sys
@@ -34,6 +39,17 @@ FEATURE_LIMIT = 400  # mirrors predict.py's live window -- fixed cost per step, 
 WARMUP_CANDLES = 50 * 4  # ~50h so slow indicators (sma50 etc.) aren't NaN at test start
 BACKTEST_WEIGHTS = {"technical": 0.5, "ml": 0.5}
 CANDLES_PER_DAY = 96  # 15-min candles
+
+# Extra execution cost, in basis points of price, charged on top of
+# trading.FEE_RATE's exchange commission -- a stand-in for bid-ask spread
+# and slippage that a pure commission model ignores. 0 reproduces the old
+# commission-only backtest exactly; the others answer "does the measured
+# edge survive a worse fill."
+SLIPPAGE_SCENARIOS_BPS = {
+    "Baz (sadece %0.10 komisyon)": 0.0,
+    "Orta stres (+5 bps spread/slippage)": 5.0,
+    "Yuksek stres (+15 bps spread/slippage)": 15.0,
+}
 
 
 def _trailing_window(df, end_idx: int, limit: int = FEATURE_LIMIT):
@@ -73,6 +89,107 @@ def _reliability_table(records: list[tuple[float, bool]], n_bins: int = 10) -> l
     return rows
 
 
+def _compute_signal_path(xrp_raw, btc_raw, eth_raw, model, test_start: int, n: int) -> tuple[list[dict], int, list, list]:
+    """One pass computing the technical+ML ensemble call at every test-window
+    step. Direction/confidence never depend on portfolio state, so this only
+    needs to run once and the cached path is replayed against every cost
+    scenario in _simulate_portfolio() below, instead of recomputing
+    indicators + the ML model 3x for identical signals."""
+    path: list[dict] = []
+    correct_count = 0
+    brier_records: list[tuple[float, float]] = []  # (prob_up, actual_up)
+    calibration_records: list[tuple[float, bool]] = []  # (confidence, was_correct)
+
+    for i in range(test_start, n - 1):
+        xrp_window = _trailing_window(xrp_raw, i)
+        btc_window = _trailing_window(btc_raw, i)
+        eth_window = _trailing_window(eth_raw, i)
+
+        feat = add_indicator_columns(xrp_window)
+        feat = add_cross_asset_correlation(feat, btc_window, "btc")
+        feat = add_cross_asset_correlation(feat, eth_window, "eth")
+
+        tech = technical_signal(feat)
+        ml = ml_model.ml_signal(model, feat)
+        final = ensemble.combine({"technical": tech, "ml": ml}, BACKTEST_WEIGHTS)
+
+        price = float(xrp_window["close"].iloc[-1])
+        next_price = float(xrp_raw["close"].iloc[i + 1])
+        actual_direction = "UP" if next_price > price else "DOWN"
+        is_correct = actual_direction == final["direction"]
+        if is_correct:
+            correct_count += 1
+
+        # final["score"] is a weighted average of component scores each already
+        # bounded to [-1, 1], so it stays in [-1, 1] -- safe to remap to a 0..1
+        # probability of UP without extra clipping.
+        prob_up = 0.5 + final["score"] / 2
+        actual_up = 1.0 if actual_direction == "UP" else 0.0
+        brier_records.append((prob_up, actual_up))
+        calibration_records.append((final["confidence"], is_correct))
+
+        path.append({
+            "price": price, "next_price": next_price,
+            "direction": final["direction"], "confidence": final["confidence"],
+        })
+
+    return path, correct_count, brier_records, calibration_records
+
+
+def _simulate_portfolio(signal_path: list[dict], slippage_frac: float) -> dict:
+    """Replays trading.compute_rebalance() against a cached signal path,
+    charging `slippage_frac` extra on top of trading.FEE_RATE on every fill
+    -- a stand-in for bid-ask spread/slippage a live order would face and a
+    pure commission model ignores. Portfolio state (cash/xrp/peak_value)
+    carries between steps, so a worse fill can change later decisions --
+    unlike the signal path itself, this has to be rerun per cost scenario."""
+    cash, xrp, peak_value = trading.STARTING_CASH, 0.0, trading.STARTING_CASH
+    cooldown_remaining = 0
+    max_drawdown_pct = 0.0
+    trade_log: list[tuple[str, str]] = []
+
+    for step in signal_path:
+        price = step["price"]
+        decision = trading.compute_rebalance(
+            cash, xrp, price, step["direction"], step["confidence"], peak_value, cooldown_remaining,
+        )
+        value_before = cash + xrp * price
+        peak_value = decision["new_peak_value"]
+        cooldown_remaining = decision["new_cooldown_remaining"]
+        drawdown = (peak_value - value_before) / peak_value if peak_value > 0 else 0.0
+        max_drawdown_pct = max(max_drawdown_pct, drawdown)
+
+        if decision["action"] == "BUY":
+            gross = decision["usd_amount"]
+            fee = gross * trading.FEE_RATE
+            exec_price = price * (1 + slippage_frac)  # worse fill -- same USD spent buys less XRP
+            xrp += (gross - fee) / exec_price
+            cash -= gross
+            trade_log.append(("BUY", decision["reason"]))
+        elif decision["action"] == "SELL":
+            amt = decision["xrp_amount"]
+            exec_price = price * (1 - slippage_frac)  # worse fill -- same XRP sold raises less USD
+            gross = amt * exec_price
+            fee = gross * trading.FEE_RATE
+            cash += gross - fee
+            xrp -= amt
+            trade_log.append(("SELL", decision["reason"]))
+
+    final_price = signal_path[-1]["next_price"]
+    final_value = cash + xrp * final_price
+    buy_count = sum(1 for side, _ in trade_log if side == "BUY")
+
+    return {
+        "final_value": final_value,
+        "return_pct": (final_value - trading.STARTING_CASH) / trading.STARTING_CASH * 100,
+        "trade_count": len(trade_log),
+        "buy_count": buy_count,
+        "sell_count": len(trade_log) - buy_count,
+        "stop_loss_count": sum(1 for _, reason in trade_log if reason == "Stop-loss tetiklendi"),
+        "max_drawdown_pct": max_drawdown_pct * 100,
+    }
+
+
 def run_backtest() -> None:
     print(f"Fetching {BACKTEST_CANDLES} candles (~{BACKTEST_CANDLES / CANDLES_PER_DAY:.0f} days) of XRP/BTC/ETH history...")
     xrp_raw = get_klines_history(SYMBOL, interval=INTERVAL, total=BACKTEST_CANDLES)
@@ -90,79 +207,18 @@ def run_backtest() -> None:
     if test_start >= n - 1:
         raise ValueError("Not enough candles for a warmed-up test window -- increase BACKTEST_CANDLES.")
 
-    cash, xrp, peak_value = trading.STARTING_CASH, 0.0, trading.STARTING_CASH
-    cooldown_remaining = 0
-    max_drawdown_pct = 0.0
-    trade_log = []
-    correct_count, resolved_count = 0, 0
-    brier_records: list[tuple[float, float]] = []  # (prob_up, actual_up)
-    calibration_records: list[tuple[float, bool]] = []  # (confidence, was_correct)
-
     entry_price = float(xrp_raw["close"].iloc[test_start])
     baseline_xrp = trading.STARTING_CASH * (1 - trading.FEE_RATE) / entry_price
+    final_price = float(xrp_raw["close"].iloc[n - 1])
+    buy_hold_value = baseline_xrp * final_price
+    buy_hold_return_pct = (buy_hold_value - trading.STARTING_CASH) / trading.STARTING_CASH * 100
 
     print(f"Replaying {n - 1 - test_start} steps from candle {test_start} to {n - 2}...")
-    for i in range(test_start, n - 1):
-        xrp_window = _trailing_window(xrp_raw, i)
-        btc_window = _trailing_window(btc_raw, i)
-        eth_window = _trailing_window(eth_raw, i)
-
-        feat = add_indicator_columns(xrp_window)
-        feat = add_cross_asset_correlation(feat, btc_window, "btc")
-        feat = add_cross_asset_correlation(feat, eth_window, "eth")
-
-        tech = technical_signal(feat)
-        ml = ml_model.ml_signal(model, feat)
-        final = ensemble.combine({"technical": tech, "ml": ml}, BACKTEST_WEIGHTS)
-
-        price = float(xrp_window["close"].iloc[-1])
-
-        decision = trading.compute_rebalance(cash, xrp, price, final["direction"], final["confidence"], peak_value, cooldown_remaining)
-        value_before = cash + xrp * price
-        peak_value = decision["new_peak_value"]
-        cooldown_remaining = decision["new_cooldown_remaining"]
-        drawdown = (peak_value - value_before) / peak_value if peak_value > 0 else 0.0
-        max_drawdown_pct = max(max_drawdown_pct, drawdown)
-
-        if decision["action"] == "BUY":
-            gross = decision["usd_amount"]
-            fee = gross * trading.FEE_RATE
-            xrp += (gross - fee) / price
-            cash -= gross
-            trade_log.append(("BUY", decision["reason"]))
-        elif decision["action"] == "SELL":
-            amt = decision["xrp_amount"]
-            gross = amt * price
-            fee = gross * trading.FEE_RATE
-            cash += gross - fee
-            xrp -= amt
-            trade_log.append(("SELL", decision["reason"]))
-
-        next_price = float(xrp_raw["close"].iloc[i + 1])
-        actual_direction = "UP" if next_price > price else "DOWN"
-        resolved_count += 1
-        is_correct = actual_direction == final["direction"]
-        if is_correct:
-            correct_count += 1
-
-        # final["score"] is a weighted average of component scores each already
-        # bounded to [-1, 1], so it stays in [-1, 1] -- safe to remap to a 0..1
-        # probability of UP without extra clipping.
-        prob_up = 0.5 + final["score"] / 2
-        actual_up = 1.0 if actual_direction == "UP" else 0.0
-        brier_records.append((prob_up, actual_up))
-        calibration_records.append((final["confidence"], is_correct))
-
-    final_price = float(xrp_raw["close"].iloc[n - 1])
-    final_value = cash + xrp * final_price
-    buy_hold_value = baseline_xrp * final_price
-
-    strategy_return_pct = (final_value - trading.STARTING_CASH) / trading.STARTING_CASH * 100
-    buy_hold_return_pct = (buy_hold_value - trading.STARTING_CASH) / trading.STARTING_CASH * 100
+    signal_path, correct_count, brier_records, calibration_records = _compute_signal_path(
+        xrp_raw, btc_raw, eth_raw, model, test_start, n,
+    )
+    resolved_count = len(signal_path)
     accuracy_pct = correct_count / resolved_count * 100 if resolved_count else 0.0
-    buy_count = sum(1 for side, _ in trade_log if side == "BUY")
-    sell_count = len(trade_log) - buy_count
-    stop_loss_count = sum(1 for _, reason in trade_log if reason == "Stop-loss tetiklendi")
 
     brier = sum((p - o) ** 2 for p, o in brier_records) / len(brier_records)
     log_loss = sum(_log_loss(p, o) for p, o in brier_records) / len(brier_records)
@@ -180,8 +236,6 @@ def run_backtest() -> None:
     print("=" * 64)
     print(f"Test penceresi: {resolved_count} mum (~{resolved_count / CANDLES_PER_DAY:.1f} gun)")
     print(f"Yon isabet orani: %{accuracy_pct:.1f} ({correct_count}/{resolved_count})")
-    print(f"Islem sayisi: {len(trade_log)} ({buy_count} AL, {sell_count} SAT, {stop_loss_count} stop-loss)")
-    print(f"Maksimum dusus (tepe noktasindan): %{max_drawdown_pct * 100:.1f}")
     print()
     print(f"Brier score: {brier:.4f} (dusuk=iyi; taban-orani referansi {climatology_brier:.4f})")
     print(f"Log-loss: {log_loss:.4f}")
@@ -194,16 +248,20 @@ def run_backtest() -> None:
         print(f"{row['range']:<10}{row['count']:>6}  {row['avg_confidence'] * 100:>9.1f}%  "
               f"{row['implied_accuracy'] * 100:>17.1f}%  {row['empirical_accuracy'] * 100:>13.1f}%")
     print()
-    print(f"Strateji (guven-bazli boyutlandirma + stop-loss): "
-          f"${trading.STARTING_CASH:.2f} -> ${final_value:.2f} ({strategy_return_pct:+.2f}%)")
-    print(f"Al-ve-tut (XRP, tek seferlik alim):               "
-          f"${trading.STARTING_CASH:.2f} -> ${buy_hold_value:.2f} ({buy_hold_return_pct:+.2f}%)")
-    print(f"Sabit nakit:                                       ${trading.STARTING_CASH:.2f} (degismez)")
+    print("MALIYET STRES TESTI (ayni sinyal yolu, farkli islem-maliyeti varsayimlari):")
+    print(f"{'Senaryo':<40}{'Islem':>7}{'Stop-loss':>11}{'Maks dusus':>13}{'Getiri':>11}")
+    for label, bps in SLIPPAGE_SCENARIOS_BPS.items():
+        result = _simulate_portfolio(signal_path, bps / 10000)
+        print(f"{label:<40}{result['trade_count']:>7}{result['stop_loss_count']:>11}"
+              f"{result['max_drawdown_pct']:>12.1f}%{result['return_pct']:>+10.2f}%")
+    print(f"{'Al-ve-tut (referans, tek seferlik alim)':<40}{'1':>7}{'0':>11}{'':>13}{buy_hold_return_pct:>+10.2f}%")
+    print(f"Sabit nakit (referans):                 ${trading.STARTING_CASH:.2f} (degismez)")
     print()
     print("ONEMLI SINIRLAMALAR:")
     print("- Sadece teknik+ML test edildi; balina/haber/emir-defteri canli-only, gecmis arsivi yok.")
     print("- ML modeli bu pencerede TEK SEFER egitildi (production'daki gunluk yeniden-egitim tekrar oynatilmadi).")
     print("- Ensemble agirliklari sabit 50/50 (retrain.py'in gunluk ayarlamasi tekrar oynatilmadi).")
+    print("- Maliyet stresi sabit bps varsayimidir, gercek emir defteri derinligi degil (bkz. modul docstring'i).")
     print("- Bu bir yatirim tavsiyesi degildir; gecmis performans gelecegi garanti etmez.")
 
 
