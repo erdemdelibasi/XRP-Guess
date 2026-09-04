@@ -488,6 +488,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   UTF-8 baytlar mojibake olur. Biri olmadan diğeri yetmez. Webshare erişimi ileride
   mümkün olursa `kanal_finans.yml`'e `schedule:` geri eklenip yerel görev
   kapatılabilir — dosya bu geçiş için bilerek silinmedi.
+  **Görev penceresiz çalışır**: Windows Task Scheduler'daki eylem
+  `powershell.exe`'yi doğrudan değil, `backend/run_kanal_finans_hidden.vbs`
+  üzerinden (`wscript.exe ... run_kanal_finans_hidden.vbs`) çağırır. Sebep:
+  görev kullanıcının kendi masaüstü oturumunda ("Interactive" logon,
+  `LogonType=S4U`'ya çevirmek yönetici izni istiyor, kullanıcıda yok) 15
+  dakikada bir çalıştığı için `powershell.exe -WindowStyle Hidden` penceriyi
+  önce oluşturup sonra gizliyor — bu kısa bir flaş olarak görünüyor (bazen
+  powershell, bazen ardındaki konsol host'u görünüyordu). VBS sarmalayıcı
+  `WScript.Shell.Run ..., 0, True` ile pencereyi kaynağında hiç oluşturmuyor
+  (stil 0 = gizli, `True` = bekle — `MultipleInstances=IgnoreNew`'in doğru
+  çalışması için wscript.exe, powershell bitene kadar "çalışıyor" görünmeli).
+  Asıl mantık (`run_kanal_finans.ps1`, `.env` yükleme, UTF-8 zorlaması)
+  değişmedi, sadece bir katman dışarıdan sarmalandı.
 
   Bir video ancak transkript **ve** Claude çıkarımı ikisi de başarıyla
   tamamlandıktan sonra `kanal_finans_videos`'a yazılır (kripto bahsi hiç
