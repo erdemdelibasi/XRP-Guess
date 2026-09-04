@@ -570,6 +570,64 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   karşı replay eder — `backfill_strategy_portfolios.py` ile aynı desen
   (in-memory replay, idempotent, sonunda tek seferde DB'ye yaz).
 
+- **Trend-takip portföyü (momentum)** (`backend/momentum_trading.py`):
+  sekizinci $1000 kağıt-portföy, 2026-09-04'te somut bir arızaya yanıt olarak
+  eklendi — 2026-09-03'te XRP ~15 saatte +%6,8 yükseldi ve altı portföyün
+  **hepsi** günü zararda kapattı. Sebep ölçüldü: `technical`/`ml`'in 15
+  dakikalık yönü, projenin kendi 20.000 mumluk backtest'inin de doğruladığı
+  gibi gürültü tabanında (%50,0 isabet) — bu yüzden yön neredeyse her
+  döngüde flip ediyor, ve `trading._target_allocation()` DOWN'ı güven ne
+  olursa olsun **sabit %0 hedefe** eşliyor. Sonuç: 19 saatte 11 tam
+  gidiş-dönüş, hepsi ~%0,2 komisyon yiyor, trend'in kendisi hiç tutulamıyor
+  (ensemble −%2,21, en iyi tekil strateji bile buy-and-hold'un +%6,79'unun
+  çok altında). Bu, `compute_rebalance()`'ın bir hatası değil — güven-bazlı
+  sürekli yeniden dengeleme zaten tasarım gereği böyle davranıyor; çözüm
+  parametre ayarı değil, **farklı bir motor**.
+
+  Mantık: ikili bir durum makinesi (`compute_decision()`, DB'siz saf
+  fonksiyon — `compute_rebalance()`/`decide_on_mention()` ile aynı desen).
+  FLAT'ten LONG'a: fiyat son `ENTRY_LOOKBACK_CANDLES` (96 mum = 24s) mumun en
+  yüksek kapanışını kırarsa VE ema9 > ema21 (trend kırılımı destekliyor) —
+  `trading.MAX_ALLOCATION` kadar (%85) tam giriş. LONG'dan FLAT'e, üçünden
+  biri: `TRAILING_STOP_PCT` (%5, girişten sonraki tepeden), `HARD_STOP_PCT`
+  (%4, giriş fiyatından — başarısız bir kırılımı hızlı kapatır), veya
+  ema9 < ema21 (trend gerçekten bitti). Üstüne, `trading.STOP_LOSS_DRAWDOWN`/
+  `STOP_LOSS_COOLDOWN_CANDLES` ile birebir aynı mekanizmalı bir portföy-
+  seviyesi güvenlik ağı (ayrı sabit tanımlamak yerine `trading.py`'den
+  içe aktarılıyor). Kritik fark diğer altısına göre: DOWN/zayıf sinyal
+  **tek başına asla tam çıkış tetiklemez** — sadece üç somut şarttan biri
+  tetikler, o yüzden gürültü artık pozisyonu açıp kapatmıyor.
+
+  **Doğrulama durumu — buradaki hiçbir rakamı sorgusuz güvenme**: 208
+  günlük bir kesif backtest'i (bu konuşmada, commit edilmedi) 5
+  konfigürasyondan 4'ünün tam pencerede buy-and-hold'u +6 ile +26 puan
+  geçtiğini gösterdi. Ama gerçek bir eğitim/test ayrımı (ilk yarıya bakıp
+  parametre seç, ikinci yarıda hiç görülmemiş veride dene — `ml_model.py`
+  `TRAIN_FRACTION` ile aynı disiplin) çok daha sarsıcı bir tablo çizdi:
+  **eğitim yarısında 5 konfigürasyonun DA hepsi zarar etti** (buy-and-hold'un
+  5,6-12,2 puan altında, biri %19,9 düşüşle kendi %15'lik stop-loss
+  standardını bile aştı) — yani "en iyi" seçilen aslında en az kötüsüydü.
+  Test yarısındaki +31,56 puanlık kazanç, 16 işlemden **sadece BİRİNE**
+  (19-22 Ağustos, tek bir +%51,27'lik olağanüstü hareket) bağımlıydı — o
+  işlem çıkarılınca aynı pencere +%30,68'den **−%8,87'ye** dönüyordu.
+  `REBALANCE_THRESHOLD`/`CONFIDENCE_FOR_MAX_ALLOCATION` derslerinin bir
+  tekrarı: kısa/az örneklemli iyi bir sayı, büyük pencerede tutmayabilir.
+
+  **Bu yüzden bilerek backfill EDİLMEDİ** — diğer beş tekil stratejinin
+  aksine (`backfill_strategy_portfolios.py`), bu portföy $1000/0 işlemle
+  sıfırdan başlar. Geçmişe dönük o kırılgan sayıyı panelde "gerçek
+  performansmış" gibi göstermek yanıltıcı olurdu; tek doğru değerlendirme
+  bundan sonraki **gerçek, ileriye-dönük** kararlarla yapılabilir — en az
+  birkaç hafta, hem çalkantılı hem trend'li dönemlerden geçmeden bir yargıya
+  varma. `predict.py`'ye tek çağrıyla bağlı
+  (`momentum_trading.maybe_trade(db, xrp, current_price)`), `technical`
+  sinyali için zaten hesaplanmış `ema9`/`ema21`/`high` kolonlarını yeniden
+  kullanıyor — ekstra API çağrısı yok. Diğer stratejiler gibi
+  `ensemble.COMPONENTS`'e hiç girmiyor, tahmin akışını etkilemiyor;
+  frontend'de 6'lı ızgaraya değil (her turda yön/güven üretmiyor,
+  giriş-çıkış olayları var — Kanal Finans TŞ kartıyla aynı şekil) ayrı bir
+  karta (`#momentum-portfolio`) yazılıyor.
+
 ## Geliştirme notları
 
 - Git kimliği kullanıcının makinesinde ayarlı (`erdemdelibasi@gmail.com`) —

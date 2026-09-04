@@ -241,6 +241,54 @@ create table if not exists kanal_finans_trades (
 
 create index if not exists kanal_finans_trades_created_at_idx on kanal_finans_trades (created_at desc);
 
+-- Sekizinci ($1000) kagit-portfoy: trend-takip / momentum stratejisi
+-- (Donchian kirilim + EMA9/21 trend filtresi + trailing/hard stop).
+-- trading.compute_rebalance() DEGIL -- o guven-olcekli surekli yeniden
+-- dengeleme yapiyor (her yon degisiminde tepki verir, bkz. CLAUDE.md'deki
+-- 2026-09-04 bulgusu: 19 saatte 11 tam gidis-donus, %6.8'lik ralliye ragmen
+-- 6 stratejinin de zararda kapanmasi). Bu ise ikili bir durum makinesi:
+-- kirilinca TAM gir, trend gercekten kirilana/stop'a carpana kadar TUT.
+-- Karar motoru backend/momentum_trading.py'de yasiyor (kanal_finans_trading.py
+-- ile ayni desen: kendi state'i, kendi tablosu, compute_rebalance()'a girmiyor).
+--
+-- BILEREK backfill EDILMEDI -- diger 5 tekil stratejinin aksine bu portfoy
+-- $1000/0 islemle sifirdan baslar. Sebep: 208 gunluk kesif backtest'i bu
+-- yaklasimin dogru yonde oldugunu ama sonucun 16 islemden SADECE BIRINE
+-- (%51'lik tek bir olaganustu hareket) bagimli oldugunu gosterdi -- o islem
+-- cikarilinca +%30,68 -%8,87'ye donuyordu. Gecmise dayali o kirilgan sayiyi
+-- "gercek performans" gibi gostermek yaniltici olurdu; bu yuzden sadece
+-- gercek, ileriye-donuk canli kararlar birikecek (bkz. momentum_trading.py
+-- modul docstring'i).
+create table if not exists momentum_portfolio (
+  id                  int primary key default 1,
+  cash_usd            numeric not null default 1000,
+  xrp_amount          numeric not null default 0,
+  position            text not null default 'FLAT' check (position in ('FLAT', 'LONG')),
+  entry_price         numeric,
+  peak_since_entry    numeric,
+  peak_value          numeric not null default 1000,
+  stop_loss_cooldown  int not null default 0,
+  updated_at          timestamptz not null default now(),
+  check (id = 1)
+);
+
+insert into momentum_portfolio (id) values (1) on conflict (id) do nothing;
+
+create table if not exists momentum_trades (
+  id          bigint generated always as identity primary key,
+  created_at  timestamptz not null default now(),
+  side        text not null check (side in ('BUY', 'SELL')),
+  price       numeric not null,
+  xrp_amount  numeric not null,
+  usd_amount  numeric not null,
+  fee_usd     numeric not null,
+  cash_after  numeric not null,
+  xrp_after   numeric not null,
+  reason      text not null
+);
+
+create index if not exists momentum_trades_created_at_idx on momentum_trades (created_at desc);
+
 -- Row Level Security: the frontend uses the public "anon" key and must only
 -- ever be able to read data. All writes come from the backend, which uses the
 -- service_role key (bypasses RLS) via GitHub Actions secrets.
@@ -258,6 +306,8 @@ alter table kanal_finans_mentions enable row level security;
 alter table kanal_finans_fetch_attempts enable row level security;
 alter table kanal_finans_portfolio enable row level security;
 alter table kanal_finans_trades enable row level security;
+alter table momentum_portfolio enable row level security;
+alter table momentum_trades enable row level security;
 
 create policy "public read predictions" on predictions
   for select using (true);
@@ -287,4 +337,10 @@ create policy "public read kanal_finans_portfolio" on kanal_finans_portfolio
   for select using (true);
 
 create policy "public read kanal_finans_trades" on kanal_finans_trades
+  for select using (true);
+
+create policy "public read momentum_portfolio" on momentum_portfolio
+  for select using (true);
+
+create policy "public read momentum_trades" on momentum_trades
   for select using (true);

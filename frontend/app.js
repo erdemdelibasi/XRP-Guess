@@ -5,6 +5,8 @@ let strategyPortfolios = null;
 let tradesByStrategy = {};
 let kanalFinansPortfolio = null;
 let kanalFinansTrades = [];
+let momentumPortfolio = null;
+let momentumTrades = [];
 let lastLivePrice = null;
 // Toggled by clicking any strategy panel's return badge -- applies to all
 // panels at once so they stay comparable in the same unit.
@@ -84,6 +86,25 @@ async function fetchKanalFinansPortfolio() {
 
 async function fetchKanalFinansTrades(limit = 10) {
   const url = `${CONFIG.SUPABASE_URL}/rest/v1/kanal_finans_trades?select=*&order=created_at.desc&limit=${limit}`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  return res.json();
+}
+
+// Sekizinci $1000 kagit-portfoy -- trend-takip (Donchian kirilim + EMA trend
+// filtresi + trailing/hard stop), diger altisindan farkli bir motor (bkz.
+// backend/momentum_trading.py). Backfill edilmedi, sadece gercek canli karar
+// birikiyor.
+async function fetchMomentumPortfolio() {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/momentum_portfolio?select=*&id=eq.1`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+  const rows = await res.json();
+  return rows[0] ?? null;
+}
+
+async function fetchMomentumTrades(limit = 10) {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/momentum_trades?select=*&order=created_at.desc&limit=${limit}`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
@@ -467,6 +488,58 @@ function renderKanalFinansPortfolio(state, trades, livePrice) {
     </div>`;
 }
 
+function renderMomentumPortfolio(state, trades, livePrice) {
+  const container = document.getElementById("momentum-portfolio");
+  if (!state) {
+    container.innerHTML = '<p class="muted small center">Henüz veri yok</p>';
+    return;
+  }
+  const cash = Number(state.cash_usd);
+  const xrp = Number(state.xrp_amount);
+  const value = cash + xrp * (livePrice ?? 0);
+  const positionText = state.position === "LONG" ? "XRP'de (pozisyonda)" : "Nakitte (kırılım bekliyor)";
+
+  const levels = [];
+  // Bu iki seviye sadece LONG'dayken anlamli -- backend/momentum_trading.py
+  // TRAILING_STOP_PCT/HARD_STOP_PCT sabitleriyle ayni hesap, sadece gosterim.
+  if (state.position === "LONG" && state.entry_price != null) {
+    levels.push(`Giriş: ${fmtPrice(state.entry_price)}`);
+    if (state.peak_since_entry != null) {
+      const trailingStop = Number(state.peak_since_entry) * (1 - 0.05);
+      levels.push(`Tepe: ${fmtPrice(state.peak_since_entry)}`);
+      levels.push(`İzlenen trailing stop: ${fmtPrice(trailingStop)}`);
+    }
+    const hardStop = Number(state.entry_price) * (1 - 0.04);
+    levels.push(`Hard stop: ${fmtPrice(hardStop)}`);
+  }
+  if (Number(state.stop_loss_cooldown) > 0) {
+    levels.push(`Stop-loss sonrası bekleme: ${state.stop_loss_cooldown} mum kaldı`);
+  }
+
+  const tradesRows = !trades || trades.length === 0
+    ? '<tr><td colspan="3" class="muted center">Henüz işlem yok</td></tr>'
+    : trades.map((t) => {
+        const sideClass = t.side === "BUY" ? "up" : "down";
+        const sideText = t.side === "BUY" ? "AL" : "SAT";
+        return `
+          <tr>
+            <td>${fmtTime(t.created_at)}</td>
+            <td class="${sideClass}">${sideText}<span class="sub">${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)}</span></td>
+            <td><span class="sub">${t.reason ?? ""}</span></td>
+          </tr>`;
+      }).join("");
+
+  container.innerHTML = `
+    <div class="strategy-portfolio">
+      <span class="value">${fmtPrice(value)}</span>
+      <span class="muted small">${positionText}</span>
+    </div>
+    ${levels.length ? `<p class="muted small">${levels.join(" · ")}</p>` : ""}
+    <div class="table-wrap">
+      <table><thead><tr><th>Zaman</th><th>İşlem</th><th>Neden</th></tr></thead><tbody>${tradesRows}</tbody></table>
+    </div>`;
+}
+
 function renderStrategyPanels(predictions, ensembleState, strategyStates, livePrice, tradesByStrategy) {
   if (livePrice == null || predictions.length === 0) return;
   buildStrategyPanelsShell();
@@ -593,6 +666,7 @@ async function updateLivePrice() {
     document.getElementById("live-price").textContent = fmtPrice(lastLivePrice);
     safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
     safeRender(renderKanalFinansPortfolio, kanalFinansPortfolio, kanalFinansTrades, lastLivePrice);
+    safeRender(renderMomentumPortfolio, momentumPortfolio, momentumTrades, lastLivePrice);
   } catch (err) {
     console.error("Live price fetch failed:", err);
   }
@@ -662,9 +736,19 @@ async function loadPredictions() {
     console.error("Kanal Finans portfolio fetch failed:", err);
   }
 
+  try {
+    [momentumPortfolio, momentumTrades] = await Promise.all([
+      fetchMomentumPortfolio(),
+      fetchMomentumTrades(),
+    ]);
+  } catch (err) {
+    console.error("Momentum portfolio fetch failed:", err);
+  }
+
   if (lastLivePrice != null) {
     safeRender(renderStrategyPanels, allPredictions, portfolioState, strategyPortfolios, lastLivePrice, tradesByStrategy);
     safeRender(renderKanalFinansPortfolio, kanalFinansPortfolio, kanalFinansTrades, lastLivePrice);
+    safeRender(renderMomentumPortfolio, momentumPortfolio, momentumTrades, lastLivePrice);
   }
 }
 

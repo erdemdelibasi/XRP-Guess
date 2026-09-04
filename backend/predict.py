@@ -23,6 +23,7 @@ from db import get_client
 import ensemble
 from fetch_data import get_current_price, get_klines, get_klines_history
 import kanal_finans_trading
+import momentum_trading
 from indicators import (
     add_cross_asset_correlation,
     add_indicator_columns,
@@ -294,6 +295,16 @@ def main() -> int:
         kanal_finans_trading.maybe_check_stop_loss(db, current_price)
     except Exception as exc:  # noqa: BLE001
         print(f"WARNING: kanal_finans stop-loss check failed ({exc})")
+
+    # Eighth paper portfolio: trend-following (Donchian breakout + EMA trend
+    # filter + trailing/hard stop), NOT one of the compute_rebalance()-based
+    # ones above -- see momentum_trading.py's module docstring for why it's
+    # a separate engine. Reuses `xrp` (already fetched + indicator-enriched
+    # above for the technical signal), no extra API call.
+    try:
+        momentum_trading.maybe_trade(db, xrp, current_price)
+    except Exception as exc:  # noqa: BLE001 -- a hiccup here must not block predictions or the other portfolios
+        print(f"WARNING: momentum portfolio update failed ({exc})")
 
     return 0
 
