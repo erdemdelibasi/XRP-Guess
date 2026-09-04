@@ -43,6 +43,10 @@ create table if not exists predictions (
   weight_orderbook      numeric,
   weight_claude         numeric,
   model_version         text,
+  -- trading.min_confidence_to_open_position() at insert time -- lets the
+  -- frontend show "does this confidence clear the real trade-opening bar"
+  -- without re-deriving that threshold's math in JS.
+  trade_threshold       numeric,
 
   resolved_at           timestamptz,
   price_at_resolution   numeric,

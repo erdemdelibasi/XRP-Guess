@@ -25,7 +25,11 @@ FEATURE_COLUMNS = [
 def build_feature_frame(raw_klines: pd.DataFrame) -> pd.DataFrame:
     """Adds indicator columns and a next-candle-up label. Drops warmup/NaN rows."""
     df = add_indicator_columns(raw_klines)
-    df["label_next_up"] = (df["close"].shift(-1) > df["close"]).astype(int)
+    # NaN > x evaluates to False (not NaN) in pandas, so shift(-1)'s empty last
+    # row was silently getting a fabricated DOWN=0 label instead of being
+    # dropped -- np.where makes that row NaN explicitly so dropna catches it.
+    next_close = df["close"].shift(-1)
+    df["label_next_up"] = np.where(next_close.notna(), (next_close > df["close"]).astype(float), np.nan)
     df = df.dropna(subset=FEATURE_COLUMNS + ["label_next_up"])
     return df
 

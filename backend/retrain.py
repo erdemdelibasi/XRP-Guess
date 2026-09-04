@@ -201,6 +201,75 @@ def report_calibration_ceilings(calibrators: dict) -> None:
                   f"(max P(correct)={p_max:.3f}). Not an error; see trading.min_confidence_to_open_position().")
 
 
+def _strategy_portfolio_state_as_of(db, strategy: str, cutoff_iso: str) -> tuple[float, float]:
+    """Reconstructs a single-signal strategy's (cash_usd, xrp_amount) as of
+    `cutoff_iso`, from the most recent strategy_trades row at or before it --
+    trading.STARTING_CASH/0 if it hadn't traded yet. Scoped to
+    trading.STRATEGIES only (all read strategy_trades the same way), unlike
+    daily_report.py's more general version which also has to branch for the
+    ensemble's own `trades` table and Kanal Finans TŞ's separate tables."""
+    res = (
+        db.table("strategy_trades")
+        .select("cash_after,xrp_after")
+        .eq("strategy", strategy)
+        .lte("created_at", cutoff_iso)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if res.data:
+        return float(res.data[0]["cash_after"]), float(res.data[0]["xrp_after"])
+    return trading.STARTING_CASH, 0.0
+
+
+def report_economic_value(db, xrp_history, records: dict, weights: dict) -> None:
+    """Says out loud whether a component's rolling directional accuracy --
+    the very number influence_weights() just turned into a weight -- actually
+    turned into money in that component's own paper portfolio, over the
+    identical ROLLING_WINDOW_DAYS window.
+
+    Accuracy and realized (fee-inclusive) return can diverge (see
+    daily_report.py's strategy_report docstring: "a strategy can be accurate
+    but still lose money to fees"), and nothing previously checked that for
+    the specific window the weights are computed from -- the panels and daily
+    mail only ever show since-inception or 24h returns, neither of which
+    lines up with the 14-day accuracy window.
+
+    Reuses the klines already fetched for today's ML retrain for the "price
+    then" lookup instead of an extra Binance call or depending on a nearby
+    resolved prediction existing.
+
+    Diagnostic only, same spirit as report_calibration_ceilings -- does not
+    adjust any weight or trading decision.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=ROLLING_WINDOW_DAYS)
+    price_then_rows = xrp_history[xrp_history["open_time"] <= since]
+    if price_then_rows.empty:
+        print("Economic value check: not enough candle history for the rolling window yet -- skipping.")
+        return
+    price_then = float(price_then_rows["close"].iloc[-1])
+    price_now = float(xrp_history["close"].iloc[-1])
+
+    print(f"Economic value check (accuracy vs realized return, last {ROLLING_WINDOW_DAYS}d, "
+          f"XRP {price_then:.4f} -> {price_now:.4f}):")
+    for component in trading.STRATEGIES:
+        rec = records.get(component)
+        if rec is None:
+            continue  # not enough resolved predictions yet for an accuracy figure
+        accuracy = rec[0] / rec[1]
+        cash_then, xrp_then = _strategy_portfolio_state_as_of(db, component, since.isoformat())
+        value_then = cash_then + xrp_then * price_then
+        live = trading.get_portfolio_state(db, component)
+        value_now = float(live["cash_usd"]) + float(live["xrp_amount"]) * price_now
+        portfolio_pct = (value_now - value_then) / value_then * 100 if value_then else 0.0
+
+        flag = ""
+        if weights.get(component, 0.0) > 0 and portfolio_pct < 0:
+            flag = "  <-- accuracy is contributing weight but the SAME-WINDOW portfolio lost money (fee erosion?)"
+        print(f"  {component}: accuracy %{accuracy * 100:.1f} ({rec[0]}/{rec[1]}) | "
+              f"portfolio {portfolio_pct:+.2f}%{flag}")
+
+
 def main() -> int:
     db = get_client()
 
@@ -229,6 +298,7 @@ def main() -> int:
     # These weights are for display only -- ensemble.combine() pools on the
     # (correct, total) records themselves, not on a weight (see its docstring).
     new_weights = ensemble.influence_weights(records)
+    report_economic_value(db, history, records, new_weights)
 
     accuracies = {c: (records[c][0] / records[c][1] if records[c] else None)
                   for c in ensemble.COMPONENTS}

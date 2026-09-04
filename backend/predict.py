@@ -222,7 +222,7 @@ def main() -> int:
 
     target_time = next_quarter_hour(now)
 
-    inserted = db.table("predictions").insert({
+    prediction_row = {
         "symbol": SYMBOL,
         "target_time": target_time.isoformat(),
         "price_at_prediction": current_price,
@@ -261,7 +261,20 @@ def main() -> int:
         "weight_orderbook": weights["orderbook"],
         "weight_claude": weights["claude"],
         "model_version": model_version,
-    }).execute()
+        # Same scalar every row (falls out of trading.py's constants, not
+        # tuned) -- stored per-row so the frontend can show "does this
+        # confidence clear the real trade-opening bar" without duplicating
+        # trading.min_confidence_to_open_position()'s math in JS.
+        "trade_threshold": trading.min_confidence_to_open_position(),
+    }
+
+    try:
+        inserted = db.table("predictions").insert(prediction_row).execute()
+    except Exception as exc:  # noqa: BLE001 -- see comment below
+        print(f"WARNING: insert with trade_threshold failed ({exc}); retrying without it -- "
+              "run the trade_threshold migration in supabase/schema.sql.")
+        prediction_row.pop("trade_threshold")
+        inserted = db.table("predictions").insert(prediction_row).execute()
 
     print(f"New prediction for {target_time.isoformat()} @ {current_price} {SYMBOL}: "
           f"{final['direction']} {final_pct * 100:+.2f}% -> {current_price * (1 + final_pct):.4f} "

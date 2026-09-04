@@ -561,7 +561,22 @@ function renderStrategyPanels(predictions, ensembleState, strategyStates, livePr
       predEl.textContent = "Sessiz (sinyal yok)";
     } else {
       const arrow = dir === "UP" ? "▲" : "▼";
-      predEl.innerHTML = `<span class="${dir === "UP" ? "up" : "down"}">${arrow} %${Math.round(conf * 100)} güven</span> → ${fmtPrice(latest[cfg.priceField])} (${fmtPct(latest[cfg.pctField])})`;
+      // P(yön) = 50% + confidence/2 -- same mapping backtest.py's reliability
+      // table and ensemble.combine() use (confidence is |prob_up - 0.5| * 2).
+      // "Eşik" compares against trading.min_confidence_to_open_position(),
+      // stored per-row as trade_threshold -- the real bar compute_rebalance()
+      // uses to open a position from cash, not an approximation re-derived
+      // here. A price/pct estimate alone reads as more certain than a 15-min
+      // signal actually is, so the probability + edge status is shown first.
+      const probUp = Math.round(50 + conf * 50);
+      const threshold = latest.trade_threshold;
+      const edgeHtml = threshold != null
+        ? (conf >= threshold
+            ? '<span class="up">edge: yeterli</span>'
+            : '<span class="muted">edge: yetersiz</span>')
+        : "";
+      predEl.innerHTML = `<span class="${dir === "UP" ? "up" : "down"}">${arrow} %${Math.round(conf * 100)} güven</span> → ${fmtPrice(latest[cfg.priceField])} (${fmtPct(latest[cfg.pctField])})`
+        + `<br><span class="muted small">P(${dir}) ~%${probUp}${edgeHtml ? " · " : ""}</span>${edgeHtml}`;
     }
 
     // Accuracy pie (respects the same date-range buttons across all panels)
