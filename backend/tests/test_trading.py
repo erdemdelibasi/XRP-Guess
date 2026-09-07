@@ -87,3 +87,30 @@ def test_min_confidence_to_open_position_is_the_real_trade_boundary():
     )
     assert just_below["action"] == "HOLD"
     assert just_above["action"] == "BUY"
+
+
+def test_full_exit_leaves_no_float_dust():
+    """A DOWN signal targets 0 XRP, so the exit must be exact. These are the
+    live numbers from the `ml` portfolio's 2026-09-06 12:30 SELL: dividing
+    current_xrp_value (xrp*price) back by price doesn't round-trip, so min()
+    kept the slightly-smaller float and left 5.684341886080802e-14 XRP
+    behind -- which maybe_trade() then labelled "LONG" (it writes "LONG" if
+    new_xrp > 0), showing an all-cash portfolio as holding a position."""
+    cash, xrp, price = 368.45734949117997, 439.0234656070834, 1.4252
+    decision = trading.compute_rebalance(
+        cash=cash, xrp=xrp, price=price, direction="DOWN",
+        confidence=0.5, peak_value=1000.0,
+    )
+    assert decision["reason"] == "Hedef pozisyona rebalance (azalt)"
+    assert xrp - decision["xrp_amount"] == 0.0, "full exit must leave exactly zero"
+
+
+def test_partial_rebalance_still_sells_only_the_drift():
+    """The dust guard must not swallow a genuine partial reduction."""
+    cash, xrp, price = 100.0, 500.0, 1.40
+    decision = trading.compute_rebalance(
+        cash=cash, xrp=xrp, price=price, direction="UP",
+        confidence=0.05, peak_value=cash + xrp * price,
+    )
+    assert decision["reason"] == "Hedef pozisyona rebalance (azalt)"
+    assert 0 < decision["xrp_amount"] < xrp

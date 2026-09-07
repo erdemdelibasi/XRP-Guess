@@ -177,6 +177,16 @@ def compute_rebalance(cash: float, xrp: float, price: float, direction: str,
 
     if drift > REBALANCE_THRESHOLD:
         xrp_to_sell = min(xrp, (current_xrp_value - target_xrp_value) / price)
+        # A DOWN signal targets 0 XRP, so this should be a clean full exit --
+        # but current_xrp_value is xrp*price and dividing it back by price
+        # doesn't round-trip exactly, so min() keeps the slightly-smaller
+        # float and leaves dust behind. Live proof: the `ml` portfolio sat at
+        # 5.7e-14 XRP, which maybe_trade() then labelled "LONG" (it writes
+        # "LONG" if new_xrp > 0), so an all-cash portfolio showed as holding
+        # a position on the dashboard. Snapping a float-noise remainder to a
+        # full exit fixes it at the source, for backtest.py too.
+        if xrp - xrp_to_sell < xrp * 1e-9:
+            xrp_to_sell = xrp
         return {
             "action": "SELL", "usd_amount": 0.0, "xrp_amount": xrp_to_sell,
             "new_peak_value": peak_value, "new_cooldown_remaining": 0, "reason": "Hedef pozisyona rebalance (azalt)",

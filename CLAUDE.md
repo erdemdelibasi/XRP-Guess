@@ -116,6 +116,32 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   mu"), kesin bir maliyet modeli değil.
 - Tahminler **çeyrek-saat işaretlerini** (:00/:15/:30/:45) hedefler, çalışma
   anından "1 saat sonra"yı değil. Bkz. `predict.py:next_quarter_hour`.
+- **Hedef işaret en az `MIN_HORIZON_MINUTES` (10 dk) uzakta olmalı**
+  (2026-09-07): cron `:01/:16/:31/:46`'da ateşlenince hedefe ~14 dk kalır ve
+  bu koruma hiç devreye girmez — ama GitHub Actions bu koşuları düzenli
+  geciktiriyor ve `:14`'te düşen bir koşu `:15`'i hedefliyordu, yani
+  "15 dakikalık tahmin" 40 saniyelik ufka sıkışıyordu. 599 canlı koşuda
+  ölçüldü: medyan ufuk **5,6 dakikaya** çökmüştü, satırların **%57'si 6
+  dakikanın altında**, 21 satır 1 dakikanın altındaydı. Bu küçük bir sapma
+  değil — sinyal 15m mumlardan türüyor ve `estimate_pct_change` 15 dakikalık
+  bir hareketi boyutlandırıyor, o satırlar ise saf mikroyapı gürültüsüne
+  karşı puanlanıyordu. Gerçekleşen |hareket| de aynı oranda küçülüyordu
+  (>10 dk'lık satırlarda medyan %0,196; <3 dk'lıklarda %0,071). **Ve bu
+  satırların hepsi `retrain.py`'nin rolling accuracy'sini, oradan da ensemble
+  güvenilirliklerini besliyordu** — eski "canlı fiyatla çözümleme" hatasının
+  (bkz. `price_at_target`) birebir aynı sınıfı.
+  Bir sonraki işarete atlamanın maliyeti ölçüldü: aynı 599 gerçek koşu
+  zaman damgasında 10 dakika geniş bir platonun (10..15 hepsi aynı davranıyor)
+  başlangıcı ve sadece **4 koşu** başka bir koşunun aldığı işaretle
+  çakışıyor — çakışma da bozuk satır değil, `main()`'deki idempotency
+  kontrolüyle atlanan satır demek. Daha düşük değerler iki ölçütte de kötü
+  (5 dk: 86 çakışma ve satırların hâlâ %12'si 6 dk altında), çünkü koşuların
+  sadece bir kısmını kaydırıp ardışık iki koşuyu aynı işarete düşürüyorlar.
+  Sonuçta oluşan ufuk mevcut gecikmeyle ~20 dk — yani 15m mumdan biraz
+  kısa değil, biraz uzun. `trading.py`'nin baktığı iki şey (yön ve güven)
+  etkilenmiyor; `predicted_pct_change`/`predicted_price` 15 dakikaya göre
+  boyutlandığı için biraz düşük okunuyor, onları yeniden ölçeklemek ayrı ve
+  henüz ölçülmemiş bir değişiklik.
 - **Bir tahmin, hedef anındaki gerçek fiyata göre çözülür** — çözümleyicinin
   çalıştığı andaki canlı fiyata göre DEĞİL (`predict.py:price_at_target`,
   hedef anda kapanan 1 dakikalık mumun kapanışını çeker; mum çekilemezse

@@ -43,14 +43,51 @@ ETH_SYMBOL = "ETHUSDT"
 INTERVAL = "15m"
 FEATURE_LIMIT = 400
 BOOTSTRAP_TRAINING_CANDLES = 4000
+# Never aim at a quarter-hour mark closer than this -- see next_quarter_hour().
+MIN_HORIZON_MINUTES = 10
 
 
-def next_quarter_hour(now: datetime) -> datetime:
-    """Rounds strictly upward to the next :00/:15/:30/:45 mark."""
+def next_quarter_hour(now: datetime, min_horizon_minutes: int = MIN_HORIZON_MINUTES) -> datetime:
+    """The next :00/:15/:30/:45 mark that is still `min_horizon_minutes` away.
+
+    Rounding strictly upward is what we want when the run is punctual: the
+    cron fires at :01/:16/:31/:46, so the next mark is ~14 minutes out and
+    the guard never triggers. But GitHub Actions routinely delays these runs,
+    and a run that lands at :14 would target :15 -- a "15-minute prediction"
+    with a 40-second horizon.
+
+    Measured over 599 live runs (2026-08-31..09-07): the median horizon had
+    collapsed to 5.6 minutes, 57% of rows were under 6 minutes and 21 rows
+    had under 1 minute. That is not a small drift -- the signal is built from
+    15m candles and estimate_pct_change() sizes a 15-minute move, so those
+    rows scored it against pure microstructure noise. The realized |move| at
+    resolution shrank in step (median 0.196% for the >10 min rows, 0.071%
+    for the <3 min ones), and every one of those rows feeds retrain.py's
+    rolling accuracy and from there the ensemble reliabilities -- the same
+    way the old resolve-at-live-price bug did (see price_at_target).
+
+    Skipping to the following mark costs almost nothing here: replaying the
+    guard over those 599 real run timestamps, 10 minutes lands on a broad
+    plateau (10..15 all behave alike) where only 4 runs collide with a mark
+    another run already claimed -- and a collision is merely a skipped row
+    via the idempotency check in main(), not a corrupted one. Lower values
+    are worse on both counts (5 minutes: 86 collisions and still 12% of rows
+    under 6 minutes) because they bump only some runs, so consecutive runs
+    land on the same mark.
+
+    Note the horizon this produces is ~20 minutes at the current lateness,
+    a bit longer than the 15m candle rather than a bit shorter. Direction and
+    confidence -- the two things trading.py acts on -- are unaffected;
+    predicted_pct_change/predicted_price are sized for 15 minutes and so
+    read slightly low. Rescaling them is a separate, unmeasured change.
+    """
     floored = now.replace(second=0, microsecond=0)
     remainder = floored.minute % 15
     step = 15 - remainder if remainder else 15
-    return floored + timedelta(minutes=step)
+    target = floored + timedelta(minutes=step)
+    while (target - now).total_seconds() < min_horizon_minutes * 60:
+        target += timedelta(minutes=15)
+    return target
 
 
 def price_at_target(target_time: datetime, fallback: float) -> float:
