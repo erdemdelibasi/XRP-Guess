@@ -738,6 +738,36 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   (peak_value hiç düşmez, cooldown engelleniyor, REBALANCE_THRESHOLD ölü
   bölgesi gibi) bir daha sessizce kırılmaktan korur.
 
+## Araştırma tezgâhı (`backend/research/`)
+
+Canlı sistemden tamamen ayrık, hiçbir workflow çağırmıyor, Supabase'e
+yazmıyor — bir hipotezi canlıya dokunmadan önce ölçüp elemek için.
+**Yeni bir strateji fikri gelmeden önce `backend/research/README.md`'yi
+oku**: orada 2026-09-07'de ölçülüp elenmiş dört hipotez ve nedenleri
+duruyor (ufku uzatmak, funding carry, kesitsel momentum, kesitsel
+reversal). Aynı yolları tekrar denememek için var.
+
+En önemli iki bulgu:
+- **15 dakikalık ufukta başabaş için gereken yön isabeti %95,6'dır.**
+  Ortalama hareket %0,219, gidiş-dönüş komisyon %0,20 — bu modelin
+  kalitesiyle ilgisi olmayan aritmetik bir duvar. Ufku 1 güne çıkarmak
+  eşiği %53,7'ye indiriyor ama ölçülen isabet %52,1'de kalıyor ve hiçbir
+  ufukta anlamlı hale gelmiyor (en iyi z=+1,86, Brier skorlarının hepsi
+  0,25 üstü). "Modeli iyileştirelim" bu duvarın yanlış tarafında duran
+  bir soru.
+- **Anlamlı bir IC, alınabilir bir avantaj demek değildir.** Kesitsel
+  reversal'da IC out-of-sample'da sağlam negatif (44/45 konfigürasyon,
+  t=−6,5'e kadar, Bonferroni eşiğini geçiyor) ama beş standart portföy
+  kurulumunun hiçbiri komisyon sıfır alınsa bile parasal avantaj
+  üretmiyor (en iyi t=+0,38). Sebep ölçüldü: IC bir sıralama
+  istatistiği, bir coinin bir sıra düşmesiyle 10x yapmasını aynı sayıyor;
+  dolarlar saymıyor. Bir sinyalin istatistiksel varlığı ile paraya
+  çevrilebilirliği ayrı iki sorudur, ikincisi her zaman ayrıca ölçülmeli.
+
+`panel.json` (13MB önbellek) gitignore'da — `python panel.py` ile ~35 dk'da
+yeniden kurulur. Panel delist/rename olmuş sembolleri **bilerek** içerir;
+onları atmak hayatta-kalma yanlılığı olur.
+
 ## Ton / dil
 
 - Kullanıcıyla iletişim Türkçe; kod/tanımlayıcılar İngilizce.

@@ -9,3 +9,6 @@ backend/logs/
 .vercel/
 .DS_Store
 Thumbs.db
+
+# research bench data cache (13MB, rebuild with backend/research/panel.py)
+backend/research/panel.json
