@@ -14,7 +14,12 @@ GitHub Actions (cron, sunucusuz zamanlayıcı)
 
 Kullanıcının kendi bilgisayarı (Windows Task Scheduler -- GitHub Actions DEĞİL,
 bkz. aşağıdaki Kanal Finans notu)
-  -> backend/run_kanal_finans.ps1 -> kanal_finans.py   her 15 dk, ensemble'dan bağımsız
+  -> ../Kanal-Finans-Fetcher/fetcher.py   her 30 dk -- YouTube'dan TEK çekiş,
+                             XAU-Guess'le PAYLAŞILAN sibling repo, iki projeye
+                             de kendi şemasıyla yazar (bkz. o reponun README'si)
+  -> backend/run_kanal_finans.ps1 -> kanal_finans.py   her 15 dk, YouTube'a
+                             HİÇ gitmez -- sadece fetcher'ın yazdığı bekleyen
+                             görüşleri portföye uygular, ensemble'dan bağımsız
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -485,119 +490,55 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   günlük videolarında XRP/BTC/ETH/kripto hakkında söylediklerini Claude ile
   çıkarıp ayrı bir bilgi akışı olarak gösterir. **`ensemble.COMPONENTS`'e
   eklenmedi ve `predict.py` bu modülü hiç çağırmıyor** — burada bir tahmin
-  üretmiyoruz, sadece Tunç Şatıroğlu'nun ne dediğini raporluyoruz. Kanal, RSS
-  ile key'siz takip edilir
-  (`https://www.youtube.com/feeds/videos.xml?channel_id=UCGBytjbMXiF1nbe6HD7iORQ`
-  — channel_id kanalın `canonical` linkinden bir kere çözülüp sabitlendi,
-  handle değişse bile ID sabit kalır).
+  üretmiyoruz, sadece Tunç Şatıroğlu'nun ne dediğini raporluyoruz.
 
-  **Neden GitHub Actions'ta DEĞİL de kullanıcının kendi bilgisayarında
-  çalışıyor**: canlıda doğrulandı (2026-09-02) — GitHub Actions'ın Azure IP
-  aralığından yapılan transkript istekleri YouTube tarafından `RequestBlocked`
-  ile sistematik olarak reddediliyor (iki ayrı manuel koşuda 15 videonun 15'i
-  de aynı hatayla başarısız oldu). `api.binance.com` için yaşanan bulut-IP-
-  engeli riskinden (bkz. yukarıdaki Binance notu) daha ciddisi — orada
-  alternatif bir "vision" host'u işe yaradı, burada YouTube'un önerdiği
-  çözüm bir proxy (`_build_api()` hâlâ `WEBSHARE_PROXY_USERNAME`/
-  `WEBSHARE_PROXY_PASSWORD` set edilirse `WebshareProxyConfig` üzerinden
-  bağlanmayı destekliyor, ama kullanıcı webshare.io'ya kurumsal ağından
-  erişemediği için şimdilik kullanılmıyor). **2026-09-03 güncellemesi: "yerel
-  makine engellenmiyor" varsayımı artık doğru DEĞİL** — o gün hem 10:15'teki
-  zamanlanmış koşu (`QsJ-xe4BJh0`) hem de elle yapılan iki test koşusu
-  (`_y4xjtJg5Qg`) kullanıcının kendi makinesinden `IpBlocked` aldı. Yani
-  yerele taşımak engeli tamamen çözmedi, sadece azalttı; kalıcı çözüm hâlâ
-  bir residential proxy (Webshare) ve o da kurumsal ağ erişimine bağlı.
-  Bu yüzden tekrar-deneme geri çekilmesi (aşağıda) kozmetik bir iyileştirme
-  değil, engeli kötüleştirmemek için gerekli. — bu yüzden
-  `kanal_finans.yml`'deki `schedule:` tetikleyicisi **bilerek kaldırıldı**
-  (sadece `workflow_dispatch` kaldı, elle test için), gerçek zamanlama
-  `backend/run_kanal_finans.ps1` + Windows Task Scheduler ile kullanıcının
-  makinesinde **her 15 dakikada bir** (00:00'dan başlayan günlük tetikleyici,
-  15 dk tekrar aralığı, 24 saat süre) çalışıyor. Eskiden günde 4 kezdi
-  (10:15/15:00/19:00/23:30); 2026-09-03'te 15 dakikaya çekildi çünkü yeni
-  video YOKKEN bir koşunun maliyeti pratikte sıfır: bir RSS GET (~3 KB) +
-  bir Supabase SELECT, sonra `return` — transkript yok, Claude çağrısı yok,
-  para yok. Kazanç, yeni bir videoyu yakalama gecikmesinin ~6 saatten 15
-  dakikaya inmesi. **YouTube'un WebSub/PubSubHubbub push'u değerlendirilip
-  reddedildi**: gerçek bir push servisi var (saniyeler içinde bildirim) ama
-  callback'in herkese açık bir HTTPS endpoint olması gerekiyor; transkripti
-  çekmesi gereken makine ise kurumsal ağın arkasındaki yerel makine, yani
-  bildirim Vercel/Supabase'e düşse bile yerel makine yine bir yeri
-  yoklamak zorunda — sorgu ortadan kalkmıyor, sadece YouTube'dan Supabase'e
-  taşınıyor. Gerçek push için makinede 7/24 açık bir Supabase Realtime
-  dinleyicisi (Task Scheduler yerine servis) gerekirdi; uyku/reboot'ta
-  ölen, çok daha kırılgan bir parça karşılığında kazanç 15 dakikadan
-  saniyelere inmek — günde birkaç video atan bir kanal için değmiyor.
-  Görev ayrıca `MultipleInstances=IgnoreNew` (yavaş bir koşu üst üste
-  binmesin), `ExecutionTimeLimit=10 dk` (tekrar aralığının altında) ve
-  **pilde de çalışacak** şekilde ayarlandı — `DisallowStartIfOnBatteries`
-  varsayılan olarak açıktı, yani dizüstü fişten çekiliyken görev HİÇ
-  çalışmıyordu; 3 saniyelik bir Python koşusu için bu ayar tüm mekanizmayı
-  boşa çıkarıyordu.
-  **Bu, projenin "sunucusuz" mimarisinden bilinçli bir sapma** — makine o
-  saatlerde kapalıysa/uykudaysa o çalıştırma atlanır, bir sonraki zamanlanmış
-  çalıştırmada `main()` zaten idempotent olduğu için otomatik telafi olur.
-  `run_kanal_finans.ps1`, `backend/.env`'i (gitignore'da, `.env.example`
-  şablonundan elle kopyalanır — GitHub Secrets'taki değerlerle aynı olmalı)
-  okuyup ortam değişkeni olarak yükler ve çıktıyı `backend/logs/`'a
-  (gitignore'da) tarihli bir dosyaya yazar. **Bu boru hattının iki ucu da
-  UTF-8'e zorlanmalı** ve bu kozmetik değil: Windows'ta yönlendirilmiş bir
-  stdout varsayılan olarak cp1252'dir, Türkçe bir video başlığını `print`
-  etmek `UnicodeEncodeError` ile TÜM koşuyu öldürür. 2026-09-03'te tam bu
-  oldu — zamanlanmış görev her koşuda kod 1 ile çıkıyor, log video ortasında
-  kesiliyor ve `record_failure()` hiç çalışmadığı için yeni kurulan
-  tekrar-deneme geri çekilmesi sessizce hiçbir şey kaydetmiyordu (tablo
-  boştu; sebebin migration olduğu sanıldı, değildi). İki ayrı yarısı var:
-  `kanal_finans.py` `sys.stdout.reconfigure(encoding="utf-8")` ile yazarken,
-  `run_kanal_finans.ps1` `[Console]::OutputEncoding`'i UTF-8 yapar — çünkü
-  PowerShell yerel bir programın çıktısını onunla ÇÖZER, cp1252 kalırsa
-  UTF-8 baytlar mojibake olur. Biri olmadan diğeri yetmez. Webshare erişimi ileride
-  mümkün olursa `kanal_finans.yml`'e `schedule:` geri eklenip yerel görev
-  kapatılabilir — dosya bu geçiş için bilerek silinmedi.
-  **Görev penceresiz çalışır**: Windows Task Scheduler'daki eylem
-  `powershell.exe`'yi doğrudan değil, `backend/run_kanal_finans_hidden.vbs`
-  üzerinden (`wscript.exe ... run_kanal_finans_hidden.vbs`) çağırır. Sebep:
-  görev kullanıcının kendi masaüstü oturumunda ("Interactive" logon,
-  `LogonType=S4U`'ya çevirmek yönetici izni istiyor, kullanıcıda yok) 15
-  dakikada bir çalıştığı için `powershell.exe -WindowStyle Hidden` penceriyi
-  önce oluşturup sonra gizliyor — bu kısa bir flaş olarak görünüyor (bazen
-  powershell, bazen ardındaki konsol host'u görünüyordu). VBS sarmalayıcı
-  `WScript.Shell.Run ..., 0, True` ile pencereyi kaynağında hiç oluşturmuyor
-  (stil 0 = gizli, `True` = bekle — `MultipleInstances=IgnoreNew`'in doğru
-  çalışması için wscript.exe, powershell bitene kadar "çalışıyor" görünmeli).
-  Asıl mantık (`run_kanal_finans.ps1`, `.env` yükleme, UTF-8 zorlaması)
-  değişmedi, sadece bir katman dışarıdan sarmalandı.
+  **2026-09-08'de ikiye bölündü.** YouTube'a giden kısım (RSS, transkript,
+  geri çekilme, Claude çıkarımı) artık bu projede DEĞİL —
+  `../Kanal-Finans-Fetcher`'a taşındı, XAU-Guess ile **paylaşılan** bir
+  sibling repo. Sebep: bu proje ve XAU-Guess aynı kanalı
+  (`UCGBytjbMXiF1nbe6HD7iORQ`), aynı makineden (aynı residential IP), her
+  15 dakikada bir **bağımsız** olarak izliyordu — aynı videonun transkripti
+  YouTube'dan iki proje için ayrı ayrı çekiliyordu, yani aralıklı olarak
+  bizi zaten engelleyen bir uç noktaya karşı gereksiz bir ikiye katlama.
+  Ölçüldü (2026-09-08): bu proje `kanal_finans_videos`'da **23** başarılı
+  satırla dururken (en sonuncusu bir gün önceden), XAU-Guess'in **sıfır**
+  satırı vardı — yani engel kalıcı değil aralıklı, ve iki projenin toplam
+  isteğini ikiye katlamak onu kötüleştiriyor olabilir (kesin nedensellik
+  iddia edilemez, zamanlama örtüşüyor).
 
-  Bir video ancak transkript **ve** Claude çıkarımı ikisi de başarıyla
-  tamamlandıktan sonra `kanal_finans_videos`'a yazılır (kripto bahsi hiç
-  yoksa bile 0 mention'lı "işlendi" satırı normaldir); herhangi bir adım
-  başarısız olursa video hiç yazılmaz ve bir sonraki zamanlanmış çalıştırmada
-  otomatik tekrar denenir. **Tekrar denemeler geri çekilmeli**
-  (`kanal_finans.py:RETRY_SCHEDULE`, sayaç `kanal_finans_fetch_attempts`
-  tablosunda): ilk 3 başarısızlık her koşuda (15 dk) yeniden denenir, sonra
-  sırasıyla 1 saat / 4 saat / 12 saat aralıklarla. Bu, 15 dakikalık zamanlama
-  değişikliğinin zorunlu eşlikçisidir — geri çekilme olmadan transkripti
-  IP-engelli tek bir video günde 96 kez, **zaten bizi reddeden** endpoint'e
-  vurulurdu; geçici bir engeli kalıcıya çevirmenin en garanti yolu bu olurdu.
-  Kalıcı takılı bir video böylece ~2 deneme/gün'e oturur, yeni bir video ise
-  hiç geciktirilmez (kaydı olmadığı için her zaman "due"dur). Bilerek bir
-  pes-etme eşiği yok: genişleyen aralık maliyeti zaten sınırlıyor ve video
-  eninde sonunda RSS penceresinden düşüyor. Satır video başarıyla
-  işlenince silinir (`clear_failures`). Tablonun okunması/yazılması
-  **fail-soft**: tablo yoksa (migration uygulanmamışsa) ya da Supabase
-  hıçkırırsa koşu ölmez, sadece geri çekilme kaybolur ve eski "her koşuda
-  yeniden dene" davranışına düşülür — bu yüzden o durumda log'a **yüksek
-  sesli bir WARNING** basılır, çünkü tam olarak önlemek istediğimiz şey odur. Claude'a (`claude-sonnet-5`, aynı
-  `claude_signal.py` modeli) **kendi görüşünü değil, konuşmacının
-  söylediğini sadakatle özetlemesi** açıkça söyleniyor (`SYSTEM_PROMPT`) —
-  `stance` (UP/DOWN/NEUTRAL) Tunç Şatıroğlu'nun tonunu yansıtır, bizim
-  tahminimiz değildir; frontend'de bu netleştirilmek için ensemble'ın
-  İngilizce "UP"/"DOWN" etiketlerinden bilerek farklı, Türkçe "Olumlu/
-  Olumsuz/Nötr" rozetleri kullanılıyor (`app.js:KANAL_FINANS_STANCE_LABELS`)
-  — aynı `--up`/`--down` renk paleti, farklı metin. Maliyet günde birkaç
-  video × 1 Claude çağrısı — `claude_signal.py`'nin günde 96 çağrısının çok
-  altında, önemsiz. Backtest edilemez (canlı-only, geçmişe dönük ucuz bir
-  replay yolu yok — `claude_signal.py` ile aynı sınırlama).
+  `../Kanal-Finans-Fetcher` her 30 dakikada bir RSS'i **bir kez** okur, her
+  videonun transkriptini **bir kez** çeker, sonra iki ayrı Claude çağrısıyla
+  (bu projenin XRP/BTC/ETH/KRIPTO şeması, XAU-Guess'in ALTIN/GUMUS/GENEL +
+  tema şeması — gerçekten farklı sorular) her iki projenin **kendi**
+  Supabase'ine yazar. Geri çekilme artık tek ve gerçekten paylaşılan bir
+  sayaç (o reponun `state/backoff.json`, yerel dosya) — eskiden bu proje ve
+  XAU-Guess aynı videonun geri çekilmesini birbirinden bağımsız sayıyordu.
+  Ayrıntı, YouTube-engeli tarihçesi (`IpBlocked`, `RequestBlocked`,
+  Webshare proxy seçeneği) ve retry/UTF-8/pencere-gizleme gibi işletimsel
+  detaylar artık `../Kanal-Finans-Fetcher/fetcher.py`'nin kendi modül
+  docstring'inde ve o reponun README'sinde.
+
+  **Burada kalan** (`backend/kanal_finans.py`, küçültüldü): fetcher'ın
+  yazdığı `kanal_finans_mentions` satırlarından `applied_at is null` olan
+  **XRP** olanları okuyup portföye uygulamak. YouTube'a **hiç** gitmiyor,
+  bu yüzden **eski 15 dakikalık takviminde kalabildi** (`run_kanal_finans.ps1`
+  + Windows Task Scheduler, `run_kanal_finans_hidden.vbs` üzerinden
+  penceresiz) — hatta öncesinden daha duyarlı oldu, çünkü artık
+  bloklanabilen bir transkript çekişinin arkasında beklemiyor.
+  `migration_kanal_finans_applied_at.sql` bölünme anında var olan 45 satırı
+  kendi `created_at`'ine geriye dönük işaretledi (backfill) — yoksa yeni
+  script ilk çalıştığında hepsini "bekliyor" sanıp bugünün fiyatından
+  yıllar önceki işlemleri tekrar oynatırdı.
+
+  Claude'un (fetcher'da, `claude-sonnet-5`) **kendi görüşünü değil,
+  konuşmacının söylediğini sadakatle özetlemesi** açıkça isteniyor
+  (`SYSTEM_PROMPT`) — `stance` (UP/DOWN/NEUTRAL) Tunç Şatıroğlu'nun tonunu
+  yansıtır, bizim tahminimiz değildir; frontend'de bu netleştirilmek için
+  ensemble'ın İngilizce "UP"/"DOWN" etiketlerinden bilerek farklı, Türkçe
+  "Olumlu/Olumsuz/Nötr" rozetleri kullanılıyor
+  (`app.js:KANAL_FINANS_STANCE_LABELS`) — aynı `--up`/`--down` renk
+  paleti, farklı metin. Backtest edilemez (canlı-only, geçmişe dönük ucuz
+  bir replay yolu yok — `claude_signal.py` ile aynı sınırlama).
 
 - **Kanal Finans TŞ takip-portföyü** (`backend/kanal_finans_trading.py`):
   yedinci $1000 kağıt-portföy — diğer altısı (ensemble + technical/ml/whale/
@@ -608,8 +549,8 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   fonksiyonu (`decide_on_mention`/`check_stop_loss`) var. **Pozisyon büyüklüğü
   tam giriş/çıkış** (diğer altısının güven-bazlı kısmi pozisyonundan bilinçli
   fark) — kullanıcı bunu net olarak istedi ("bu adamın dediğini yap"), ve
-  ölçeklenecek bir güven sayısı zaten yok. `kanal_finans.py`'nin Claude
-  çıkarım şeması artık her XRP mention'ı için (diğer varlıklar için hep
+  ölçeklenecek bir güven sayısı zaten yok. Kanal-Finans-Fetcher'ın Claude
+  çıkarım şeması her XRP mention'ı için (diğer varlıklar için hep
   action=HOLD, stop/direnç=0) `action`/`stop_loss_price`/`resistance_price`
   de döndürüyor (0 = "bahsedilmedi" sentinel, `claude_signal.py`'deki gibi
   bu json_schema dialect'i nullable desteklemediği için).
@@ -624,16 +565,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   alan için yön ve karşı-örnek açıkça yazılarak düzeltildi, aynı cümleyle
   test edilip 1.37/1.41 verdiği doğrulandı; canlıdaki yanlış değer de
   (mention satırı + portföyün izlediği seviye) elle düzeltildi. Yeni bir
-  mention
-  gelince (`kanal_finans.py:main()`, o anki canlı fiyatla) `apply_mention_decision`
+  mention Kanal-Finans-Fetcher tarafından yazılınca (`kanal_finans.py:
+  apply_pending_mentions()`, o anki canlı fiyatla) `apply_mention_decision`
   BUY/SELL uygular; bir sonraki mention'da yeni bir seviye verilmemişse
   **önceki izlenen zarar-kes/direnç seviyesi korunur** (Tunç her videoda
-  tekrar etmiyor). **Zarar-kes sürekli izlenir** — sadece yeni video geldiğinde
-  değil, `predict.py`'nin her 15 dakikalık döngüsünde de
+  tekrar etmiyor). **Zarar-kes sürekli izlenir** — sadece yeni mention
+  geldiğinde değil, `predict.py`'nin her 15 dakikalık döngüsünde de
   (`kanal_finans_trading.maybe_check_stop_loss`, `main()`'in sonunda,
   `trading.maybe_trade` döngüsünden hemen sonra) — bu çağrı sadece Supabase +
   zaten çekilmiş `current_price`'a dokunuyor, **YouTube'a hiç gitmiyor**, o
-  yüzden `kanal_finans.py`'nin aksine GitHub Actions'ta sorunsuz çalışır.
+  yüzden GitHub Actions'ta sorunsuz çalışır. 2026-09-08'den beri
+  `kanal_finans.py`'nin kendisi de artık YouTube'a gitmiyor (bkz. yukarısı)
+  ama Windows Task Scheduler'da kalmaya devam ediyor — iki ayrı yerde
+  tutmanın kazandıracağı bir şey yok, zaten iyi çalışıyor.
   **Direnç seviyesi kasıtlı olarak otomatik satış tetiklemez, sadece bilgi
   amaçlı gösterilir** — canlı veride Tunç'un direnç kırılmasını bazen
   "yükseliş fırsatı/alım" olarak yorumladığı görüldü (`"1.41 direncinin

@@ -127,27 +127,34 @@ GitHub Actions'ta çalışmadığı için (yukarıda açıklandı) bu adım ayr�
 isteğe bağlı — atlarsan uygulamanın geri kalanı normal çalışmaya devam eder,
 sadece Kanal Finans paneli boş kalır.
 
+**2026-09-08'den beri iki ayrı parça var** (ayrıntı: `CLAUDE.md`).
+`backend/kanal_finans.py` artık YouTube'a hiç gitmiyor — YouTube'dan çekme
+kısmı XAU-Guess ile **paylaşılan** bir sibling repoya taşındı
+(`../Kanal-Finans-Fetcher`, kendi README'si var). Bu adımlar sadece bu
+projenin kendi trade-uygulama yarısı için:
+
 1. `backend/.env.example` dosyasını `backend/.env` olarak kopyala, içindeki
-   `SUPABASE_SERVICE_KEY` ve `ANTHROPIC_API_KEY` alanlarını GitHub
-   Secrets'a girdiğin **aynı** değerlerle doldur (`.env` gitignore'da,
-   asla commit'lenmez).
+   `SUPABASE_SERVICE_KEY` alanını GitHub Secrets'a girdiğin **aynı** değerle
+   doldur (`ANTHROPIC_API_KEY` artık burada gerekmiyor — çıkarım
+   Kanal-Finans-Fetcher'da yapılıyor; `.env` gitignore'da, asla commit'lenmez).
 2. `backend/.venv` yoksa oluştur ve bağımlılıkları kur (PowerShell'de):
    ```powershell
    cd backend
    python -m venv .venv
    .venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
-3. Elle bir kez çalıştırıp doğrula: `.\run_kanal_finans.ps1` — `backend\logs\`
-   altında o günün log dosyasını oluşturmalı, hata yoksa Supabase'de
-   `kanal_finans_videos`/`kanal_finans_mentions` tablolarında yeni satırlar
-   görmelisin (kanalda gerçekten yeni video varsa).
-4. Windows Task Scheduler'da günde 4 kez (ör. 08:12/14:12/18:12/23:12) bu
-   scripti çalıştıracak bir görev oluştur: **Görev Zamanlayıcı** →
-   **Temel Görev Oluştur** → tetikleyici olarak günlük, aynı görevde 4 ayrı
-   saat ekle (veya 4 ayrı görev) → eylem olarak
-   `powershell.exe -ExecutionPolicy Bypass -File "<repo yolu>\backend\run_kanal_finans.ps1"`.
-   Bilgisayar o saatlerde kapalı/uykudaysa o çalıştırma atlanır — bir
-   sonraki çalıştırma otomatik telafi eder (script idempotent).
+3. Ayrıca `../Kanal-Finans-Fetcher`'ı kur (kendi README'sindeki adımlar) —
+   videoları gerçekten YouTube'dan çeken ve bu projenin Supabase'ine yazan
+   o.
+4. Elle bir kez çalıştırıp doğrula: `.\run_kanal_finans.ps1` — `backend\logs\`
+   altında o günün log dosyasını oluşturmalı; Kanal-Finans-Fetcher zaten
+   çalışıp bekleyen bir mention bıraktıysa onu uyguladığını göreceksin,
+   yoksa "nothing pending" yazar.
+5. Windows Task Scheduler'da her 15 dakikada bir bu scripti çalıştıracak bir
+   görev oluştur (bkz. `CLAUDE.md`'deki tam ayarlar — `MultipleInstances=
+   IgnoreNew`, pilde de çalışsın, `run_kanal_finans_hidden.vbs` üzerinden
+   penceresiz). Bilgisayar o saatlerde kapalı/uykudaysa o çalıştırma
+   atlanır — bir sonraki çalıştırma otomatik telafi eder (script idempotent).
 
 ## Nasıl çalışıyor
 - Her 15 dakikada bir (`.github/workflows/predict.yml`, `:01/:16/:31/:46`)
@@ -243,14 +250,17 @@ sadece Kanal Finans paneli boş kalır.
   nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
   `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
   hesaplanır — ayrı bir "günlük anlık görüntü" tablosu tutulmaz.
-- Günde 4 kez (GitHub Actions'ta DEĞİL — kendi bilgisayarında, `run_kanal_finans.ps1`
-  + Windows Task Scheduler, bkz. yukarıda "Kanal Finans TŞ'yi kendi
-  bilgisayarından çalıştırma") YouTube'daki **Kanal Finans** (Tunç
-  Şatıroğlu) kanalı yeni video için kontrol edilir. Yeni bir video varsa
-  Türkçe transkripti çekilip Claude'a verilir; Claude XRP/BTC/ETH/genel
-  kripto hakkında söylenenleri **kendi görüşünü katmadan** kısa (tek
-  cümlelik) özetler halinde çıkarır. Bu tamamen **ayrı ve bağımsız bir
-  bilgi akışıdır** — yukarıdaki altı sinyalden hiçbirine karışmaz, kendi
+- Her 30 dakikada bir (GitHub Actions'ta DEĞİL — kendi bilgisayarında,
+  `../Kanal-Finans-Fetcher`, XAU-Guess ile paylaşılan sibling repo, bkz.
+  yukarıda "Kanal Finans TŞ'yi kendi bilgisayarından çalıştırma")
+  YouTube'daki **Kanal Finans** (Tunç Şatıroğlu) kanalı yeni video için
+  kontrol edilir. Yeni bir video varsa Türkçe transkripti çekilip Claude'a
+  verilir; Claude XRP/BTC/ETH/genel kripto hakkında söylenenleri **kendi
+  görüşünü katmadan** kısa (tek cümlelik) özetler halinde çıkarır ve bu
+  projenin Supabase'ine yazar. Bu projenin kendi `backend/kanal_finans.py`'si
+  (her 15 dakikada bir, YouTube'a hiç gitmeden) o satırları okuyup XRP
+  olanları portföye uygular. Bu tamamen **ayrı ve bağımsız bir bilgi
+  akışıdır** — yukarıdaki altı sinyalden hiçbirine karışmaz, kendi
   tahmini/skoru yoktur, panelde ayrı bir kart olarak (video linki, hangi
   varlıktan bahsedildiği, kısa özet ve Tunç Şatıroğlu'nun o anki tonu —
   olumlu/olumsuz/nötr) gösterilir. Video kripto konusuna hiç değinmiyorsa

@@ -253,8 +253,17 @@ create table if not exists kanal_finans_mentions (
   -- claude_signal.py), not a real price.
   action            text check (action in ('BUY', 'SELL', 'HOLD')),
   stop_loss_price   numeric,
-  resistance_price  numeric
+  resistance_price  numeric,
+  -- NULL = not yet traded on. Written by Kanal-Finans-Fetcher (a sibling
+  -- repo shared with XAU-Guess -- see CLAUDE.md); read and stamped by this
+  -- project's own kanal_finans.py, which no longer talks to YouTube at all
+  -- and just applies whatever mentions this column says are still pending.
+  -- See migration_kanal_finans_applied_at.sql for the one-time backfill this
+  -- needed on an existing table.
+  applied_at        timestamptz
 );
+create index if not exists kf_mentions_pending_idx
+  on kanal_finans_mentions (applied_at) where applied_at is null;
 
 create index if not exists kanal_finans_mentions_published_idx on kanal_finans_mentions (published_at desc);
 
