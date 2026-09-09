@@ -605,6 +605,31 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   karşı replay eder — `backfill_strategy_portfolios.py` ile aynı desen
   (in-memory replay, idempotent, sonunda tek seferde DB'ye yaz).
 
+  **Ölçek hatasına karşı olurluk (plausibility) koruması** (2026-09-09):
+  fetcher'ın ses-tabanlı (Whisper) transkripsiyona geçtiği (bkz. yukarıdaki
+  Kanal Finans TŞ notu) ilk gün canlıda gerçekleşti — mention id=49,
+  **resmi altyazı yerine yerel Whisper'la transkribe edilen ilk video**
+  (o gün altyazı ucu 429 dönüyordu), `stop_loss_price=136` /
+  `resistance_price=143` döndürdü, XRP o an ~$1,44 işlem görürken. Neredeyse
+  kesin sebep: konuşmacının söylediği "1,43" ("bir kırk üç") ondalık
+  noktasız çıplak sayı olarak transkribe edilmiş. `check_stop_loss()`
+  `price <= stop_loss_price` kontrolü yaptığı için XRP ~1 iken seviye
+  yüzlerdeyse koşul **her zaman** doğru çıkıyor — canlıda tam bu oldu: BUY,
+  11 dakika sonra sahte bir "zarar-kes tetiklendi" SELL'i. O ana kadarki
+  10 mention'ın hepsi spot'un ~%30 içindeydi (bkz. git geçmişi). Artık
+  `decide_on_mention()` her yeni seviyeyi `PLAUSIBLE_LEVEL_RATIO` (1/3–3x)
+  bandına karşı süzüyor; bandın dışındaki bir değer "hiç verilmemiş" gibi
+  davranıp önceki izlenen seviyeyi koruyor ve `apply_mention_decision()`
+  bunu yüksek sesli bir WARNING olarak logluyor (sessizce yutmuyor —
+  `retrain.py:report_calibration_ceilings` ile aynı felsefe: bir korumanın
+  neden var olduğu bir daha "arıza mı" diye sorgulanmasın). Canlı bozulan
+  veri (mention 49'un seviyeleri, portföyün gösterim amaçlı
+  `resistance_price`'ı) elle 1,36/1,43'e düzeltildi ve gerçek `_apply()`
+  yolundan geçen, açıkça "Hata düzeltmesi" diye etiketlenmiş tek bir
+  düzeltici BUY ile pozisyon yeniden LONG'a alındı — orijinal
+  BUY/hatalı-SELL satırları ledger'da dürüst bir kayıt olarak silinmeden
+  bırakıldı, hiçbir geçmiş satır gizlenmedi/değiştirilmedi.
+
 - **Trend-takip portföyü (momentum)** (`backend/momentum_trading.py`):
   sekizinci $1000 kağıt-portföy, 2026-09-04'te somut bir arızaya yanıt olarak
   eklendi — 2026-09-03'te XRP ~15 saatte +%6,8 yükseldi ve altı portföyün
@@ -699,9 +724,9 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
 Canlı sistemden tamamen ayrık, hiçbir workflow çağırmıyor, Supabase'e
 yazmıyor — bir hipotezi canlıya dokunmadan önce ölçüp elemek için.
 **Yeni bir strateji fikri gelmeden önce `backend/research/README.md`'yi
-oku**: orada 2026-09-07'de ölçülüp elenmiş dört hipotez ve nedenleri
-duruyor (ufku uzatmak, funding carry, kesitsel momentum, kesitsel
-reversal). Aynı yolları tekrar denememek için var.
+oku**: orada ölçülüp elenmiş beş hipotez ve nedenleri duruyor (ufku
+uzatmak, funding carry, kesitsel momentum, kesitsel reversal, pairs
+trading). Aynı yolları tekrar denememek için var.
 
 En önemli iki bulgu:
 - **15 dakikalık ufukta başabaş için gereken yön isabeti %95,6'dır.**

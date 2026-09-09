@@ -37,6 +37,7 @@ pencerede seçilip aynı pencerede puanlanan bir sayı hiçbir şey ifade etmez.
 | `panel.py` | 2019'dan bugüne ~350 USDT paritesi için günlük kapanış paneli kurar, `panel.json`'a önbelleğe alır (~35 dk, gitignore'da) |
 | `xsec.py` | Kesitsel testler. `ic` / `deciles` / `book` modları |
 | `horizon.py` | Aynı technical+ML sinyalini 15dk yerine 1h / 4h / 1d mumlarda yürüyen-ileri test eder |
+| `pairs.py` | XRP ile 6 korele varlık arasında kointegrasyon/z-skor bazlı pairs trading testi |
 
 ```bash
 cd backend/research
@@ -45,6 +46,7 @@ python xsec.py ic          # IC'nin egitim->test isaret tutarliligi
 python xsec.py deciles     # desil basina ortalama vs medyan getiri
 python xsec.py book        # portfoy kurulumlari, egitimde sec / testte kosur
 python horizon.py 1d       # yon tahmini, gunluk ufukta (1h / 4h de var)
+python pairs.py            # XRP/OTHER pairs trading, 6 ciftin hepsi icin egitim->test
 ```
 
 ## Şimdiye kadar elenen hipotezler
@@ -119,6 +121,34 @@ avantajın çoğunu kuyruk yiyor.
 > Buradaki genel ders: **anlamlı bir IC, alınabilir bir avantaj demek
 > değildir.** Bir sinyalin istatistiksel varlığı ile paraya çevrilebilirliği
 > ayrı iki sorudur ve ikincisi her zaman ayrıca ölçülmelidir.
+
+### 5. Pairs trading / istatistiksel arbitraj (`pairs.py`)
+
+Öncekilerden farklı bir tür bahis: yön tahmini ya da sıralama değil,
+**dolar-nötr** — XRP ile korele bir varlık arasındaki tarihsel oranın
+geçici olarak gerilip geri dönmesine bahis. Piyasanın nereye gideceğini
+bilmek gerekmiyor, teoride. Test edildi çünkü bu ailenin gerçek bir
+Renaissance/LTCM tarzı stat-arb kurulumu olması, "yine kılık değiştirmiş
+bir tahmin oyunu" diye baştan elenmeyi hak etmiyordu.
+
+XRP ile 6 korele varlık (BTC, ETH, BNB, LTC, ADA, XLM) arasında rolling OLS
+hedge oranı + z-skor giriş/çıkışı, eğitimde seçilip testte bir kez koşuldu:
+
+| Çift | Eğitim (yıllık, IR) | TEST taker | TEST komisyonsuz | t |
+|---|---|---|---|---|
+| XRP/BTC | +%64,4 (IR +1,03) | −%16,8 | −%15,1 | −0,54 |
+| XRP/ETH | +%79,6 (IR +0,87) | +%2,2 | +%8,2 | +0,25 |
+| XRP/BNB | +%40,4 (IR +0,38) | −%29,0 | −%25,6 | −0,56 |
+| XRP/LTC | −%17,6 (IR −0,19) | −%23,7 | −%20,4 | −0,52 |
+| XRP/ADA | +%33,1 (IR +0,43) | −%15,6 | −%12,9 | −0,57 |
+| XRP/XLM | +%50,9 (IR +0,59) | **+%15,9** | +%20,6 | +0,82 |
+
+Altı çiftin **dördü** test yarısında ekside — eğitimde hepsi pozitif
+görünüyordu, klasik aşırı-uydurma. En iyi ikisi (ETH, XLM) pozitif ama
+komisyonsuz halde bile t < 1, yani sıfırdan istatistiksel olarak ayırt
+edilemiyor. **İki bacaklı bir işlemin gidiş-dönüşü tek bacaklı bir işlemin
+4 katı komisyon yer** — bu da eşiği daha da yükseltiyor. Kesitsel
+reversal'daki gibi burada da anlamlı bir kanıt eşiğini geçen tek çift yok.
 
 ## Kapsam uyarısı
 
