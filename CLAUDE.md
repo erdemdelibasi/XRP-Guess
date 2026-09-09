@@ -506,7 +506,19 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   isteğini ikiye katlamak onu kötüleştiriyor olabilir (kesin nedensellik
   iddia edilemez, zamanlama örtüşüyor).
 
-  `../Kanal-Finans-Fetcher` her 30 dakikada bir RSS'i **bir kez** okur, her
+  **2026-09-09'da transkript kaynağı değişti ve bu projeyi de etkiliyor**
+  (fetcher bu projenin Supabase'ine de yazıyor). YouTube'un altyazı ucu bu
+  makineye 429 dönüyor — ama RSS, izleme sayfası ve **ses** aynı IP'den 200
+  dönüyor, yani IP engelli değil, tıkalı olan tek uç nokta altyazı. Fetcher
+  artık sesi alıp `faster-whisper` ile **yerelde** yazıya çeviriyor; altyazıyı
+  yine de video başına bir kez önce deniyor. Yukarıdaki "engel aralıklı"
+  okuması doğru yöndeydi ama eksikti: sebep büyük ihtimalle iki projenin
+  toplamda günde ~1.500 altyazı isteğine çıkan tekrar fırtınasıydı.
+  **Ayrıntı ve teşhis adımları: `../Kanal-Finans-Fetcher/youtube.md`**, ilk
+  komut `python diagnose_youtube.py`.
+
+  `../Kanal-Finans-Fetcher` **günde dört kez** (01:00/07:00/13:00/19:00, üç
+  gündüz saati kanalın yayın saatleri) RSS'i **bir kez** okur, her
   videonun transkriptini **bir kez** çeker, sonra iki ayrı Claude çağrısıyla
   (bu projenin XRP/BTC/ETH/KRIPTO şeması, XAU-Guess'in ALTIN/GUMUS/GENEL +
   tema şeması — gerçekten farklı sorular) her iki projenin **kendi**
