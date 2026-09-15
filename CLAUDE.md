@@ -610,9 +610,15 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   Kanal Finans TŞ notu) ilk gün canlıda gerçekleşti — mention id=49,
   **resmi altyazı yerine yerel Whisper'la transkribe edilen ilk video**
   (o gün altyazı ucu 429 dönüyordu), `stop_loss_price=136` /
-  `resistance_price=143` döndürdü, XRP o an ~$1,44 işlem görürken. Neredeyse
-  kesin sebep: konuşmacının söylediği "1,43" ("bir kırk üç") ondalık
-  noktasız çıplak sayı olarak transkribe edilmiş. `check_stop_loss()`
+  `resistance_price=143` döndürdü, XRP o an ~$1,44 işlem görürken.
+  **İlk teşhis yanlıştı** (kullanıcı 2026-09-15'te düzeltti): sebep
+  Whisper'ın "1,43"ü noktasız yazması DEĞİL — Tunç Şatıroğlu seviyeleri bir
+  yatırımcının konuştuğu gibi zaten kısaltarak, ondalık ayracı hiç telaffuz
+  etmeden söylüyor ("yüz kırk üç" = 1,43). Transkript sadık; eksik olan
+  bağlamdı: transkriptte "143" gören bir modelin bunun $1,43 mü $143 mü
+  olduğunu çözmesinin yolu yok, çünkü XRP'nin ne fiyatta olduğunu bilmiyor.
+  Bu ayrım pratik: yanlış teşhis "transkripsiyonu iyileştir" dedirtir,
+  doğrusu "modele fiyatı ver" dedirtir. `check_stop_loss()`
   `price <= stop_loss_price` kontrolü yaptığı için XRP ~1 iken seviye
   yüzlerdeyse koşul **her zaman** doğru çıkıyor — canlıda tam bu oldu: BUY,
   11 dakika sonra sahte bir "zarar-kes tetiklendi" SELL'i. O ana kadarki
@@ -629,6 +635,29 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   düzeltici BUY ile pozisyon yeniden LONG'a alındı — orijinal
   BUY/hatalı-SELL satırları ledger'da dürüst bir kayıt olarak silinmeden
   bırakıldı, hiçbir geçmiş satır gizlenmedi/değiştirilmedi.
+
+  **Kök sebep 2026-09-15'te düzeltildi.** Aynı hata mention id=58'de aynen
+  tekrarladı (`stop_loss_price=130` / `resistance_price=148`, XRP $1,3973
+  iken) — guard ikisini de reddetti, iki WARNING bastı ve portföy önceki
+  seviyesini korudu, yani koruma tasarlandığı gibi çalıştı ve bu kez hiçbir
+  sahte işlem olmadı. Ama bir guard bir seviyeyi ancak **atabilir**, geri
+  kazanamaz — ve `summary` metnine hiç dokunamaz, o yüzden kullanıcı
+  frontend'de "148-149 bölgesi direnç" okumaya devam ediyordu. Asıl düzeltme
+  çıkarımın yapıldığı yerde, yani **bu repoda değil**:
+  `../Kanal-Finans-Fetcher/fetcher.py` artık her XRP çıkarımına güncel
+  XRP/BTC/ETH spot fiyatını bir ölçek referansı olarak veriyor
+  (`fetch_spot_prices`, Binance public uç, key'siz, süreç başına bir kez
+  cache'li, hatada sessizce eski davranışa düşer). Prompt bunun **sadece**
+  büyüklük mertebesini çözmek için kullanılmasını, düzeltilmiş ölçeğin hem
+  sayısal alanlara hem de `summary` metnine yansıtılmasını, ama konuşmacının
+  söylemediği bir seviyenin uydurulmamasını / söylediği bir seviyenin spot'a
+  yaklaştırılmamasını açıkça söylüyor (video birkaç gün eski olabilir —
+  fiyat bir ölçek referansıdır, bir hedef değil). Aynı video
+  (`1UeCuBda-As`) yeni prompt'la tekrar çalıştırılıp doğrulandı: 130/148 →
+  **1,30/1,48**, ve summary de "1.48 bölgesi direnç, 1.30 bölgesi destek"
+  olarak düzeldi. Canlı satır (mention 58) ile portföyün izlediği seviyeler
+  elle bu değerlere çekildi. `PLAUSIBLE_LEVEL_RATIO` kaldırılmadı — artık
+  ilk savunma değil, son çare.
 
 - **Trend-takip portföyü (momentum)** (`backend/momentum_trading.py`):
   sekizinci $1000 kağıt-portföy, 2026-09-04'te somut bir arızaya yanıt olarak
