@@ -457,15 +457,18 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   `predictions` kolonlarının okunacağı `app.js:STRATEGY_CONFIG`'te tanımlı,
   yeni bir strateji eklemek istersen önce oraya bir giriş eklemen yeterli.
   `daily_report.py`'daki günlük mail de aynı portföyleri (ensemble + 5
-  tekil + Kanal Finans TŞ = 7 satır, isabet + gerçek — komisyon dahil —
+  tekil + Kanal Finans TŞ + Trend Takip = 8 satır, isabet + gerçek — komisyon dahil —
   portföy getirisi yan yana) `_strategy_table()` ile ayrı bir tabloda
   gösterir; ikisi de aynı
   `trading.get_portfolio_state(db, strategy)`/`strategy_trades`
   verisinden besleniyor, birbirinden bağımsız hesap yapmıyor.
-  Kanal Finans o tabloda `trading.STRATEGIES`'in bir üyesi olarak değil,
-  `daily_report.REPORT_STRATEGIES`+`KANAL_FINANS` sabitiyle ayrıca ekli
-  (kendi tabloları, kendi karar motoru var) — isabet hücresi bilerek boş,
-  çünkü 15 dakikalık yön çağrısı üretmiyor; puanlanacak bir şey yok.
+  Kanal Finans ve Trend Takip o tabloda `trading.STRATEGIES`'in üyesi
+  olarak değil, `daily_report.REPORT_STRATEGIES`+`KANAL_FINANS`/`MOMENTUM`
+  sabitleriyle ayrıca ekli (kendi tabloları, kendi karar motorları var) —
+  isabet hücreleri bilerek boş (`UNSCORED_STRATEGIES`), çünkü 15 dakikalık
+  yön çağrısı üretmiyorlar; puanlanacak bir şey yok. Trend Takip
+  2026-09-24'e kadar mailde hiç yoktu — o gün aynı dönemin en iyi portföyüydü
+  (+%14,7, al-ve-tut +%3,7) ve kullanıcı bunu sadece siteden görebiliyordu.
   **Panel kâr/zarar rozeti** (`.strategy-portfolio .direction`, sağ üstteki
   yeşil/kırmızı `%`/`$` etiketi): tıklanınca tüm panellerde aynı anda
   dolar ↔ yüzde arasında geçiş yapar (`setupPnlToggle`, tek global

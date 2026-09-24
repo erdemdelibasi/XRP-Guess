@@ -18,6 +18,7 @@ from db import get_client
 import ensemble
 from fetch_data import get_current_price
 import kanal_finans_trading
+import momentum_trading
 from predict import SYMBOL, get_ensemble_state
 import trading
 
@@ -32,9 +33,13 @@ COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news"
 # the table below reports: what $1000 turned into. It has no prediction
 # accuracy to show, since it makes no 15-minute directional calls.
 KANAL_FINANS = "kanal_finans"
-REPORT_STRATEGIES = ("ensemble", *trading.STRATEGIES, KANAL_FINANS)
+# The trend-following portfolio (momentum_trading.py) is the eighth, and in
+# the same position: own tables, own engine, no 15-minute calls to score.
+MOMENTUM = "momentum"
+UNSCORED_STRATEGIES = (KANAL_FINANS, MOMENTUM)
+REPORT_STRATEGIES = ("ensemble", *trading.STRATEGIES, KANAL_FINANS, MOMENTUM)
 STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina",
-                   "news": "Haber", "claude": "Claude", KANAL_FINANS: "Kanal Finans TŞ"}
+                   "news": "Haber", "claude": "Claude", KANAL_FINANS: "Kanal Finans TŞ", MOMENTUM: "Trend Takip"}
 # Deliberately different wording from the ensemble's English UP/DOWN labels --
 # a stance is what Tunç Şatıroğlu said, not a prediction of ours (same
 # distinction app.js:KANAL_FINANS_STANCE_LABELS makes in the UI).
@@ -96,17 +101,22 @@ def component_accuracy(rows: list[dict], component: str) -> tuple[float | None, 
 def _trades_table(strategy: str) -> str:
     """Each portfolio family logs to its own table: the ensemble to `trades`,
     the five single-signal strategies to a shared `strategy_trades` (keyed by
-    a `strategy` column), Kanal Finans TŞ to its own `kanal_finans_trades`."""
+    a `strategy` column), Kanal Finans TŞ and the trend-following portfolio
+    to their own `kanal_finans_trades`/`momentum_trades`."""
     if strategy == "ensemble":
         return "trades"
     if strategy == KANAL_FINANS:
         return "kanal_finans_trades"
+    if strategy == MOMENTUM:
+        return "momentum_trades"
     return "strategy_trades"
 
 
 def live_portfolio_state(db, strategy: str) -> dict:
     if strategy == KANAL_FINANS:
         return kanal_finans_trading.get_portfolio_state(db)
+    if strategy == MOMENTUM:
+        return momentum_trading.get_portfolio_state(db)
     return trading.get_portfolio_state(db, strategy)
 
 
@@ -269,6 +279,14 @@ def build_report(db) -> dict:
         strategies.pop(KANAL_FINANS, None)
         kanal_finans = None
 
+    # Same fail-soft reasoning: its own tables, and one missing row must not
+    # cost the whole mail.
+    try:
+        strategies[MOMENTUM] = strategy_report(
+            db, MOMENTUM, start, end, price_start, price_now, accuracy=None, accuracy_count=0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: momentum row skipped ({exc})")
+
     weights, _ = get_ensemble_state(db)  # rapor sadece gosterim ağırlıklarını kullanıyor
 
     return {
@@ -310,9 +328,9 @@ def render_text(report: dict) -> str:
         if s["accuracy"] is not None:
             acc_text = f"%{s['accuracy'] * 100:.0f} isabet ({s['accuracy_count']})"
         else:
-            # Kanal Finans makes no 15-minute directional calls, so there is
-            # nothing to score -- that's different from "we have no data yet".
-            acc_text = "isabet ölçülmüyor" if strategy == KANAL_FINANS else "isabet: veri yok"
+            # Kanal Finans/Trend Takip make no 15-minute directional calls, so
+            # there is nothing to score -- different from "no data yet".
+            acc_text = "isabet ölçülmüyor" if strategy in UNSCORED_STRATEGIES else "isabet: veri yok"
         today_pct = (s["value_now"] - s["value_start"]) / s["value_start"] * 100 if s["value_start"] else 0.0
         total_pct = (s["value_now"] - trading.STARTING_CASH) / trading.STARTING_CASH * 100
         lines.append(
@@ -389,9 +407,10 @@ def _strategy_table(report: dict) -> str:
     """One row per paper portfolio -- accuracy next to real fee-inclusive
     portfolio return, since they can diverge (an "accurate" strategy can
     still lose money to fees, as backtests have shown for technical/whale).
-    Kanal Finans TŞ is listed here too: it makes no directional calls so its
-    accuracy cell stays empty, but "what did $1000 become" is the one axis on
-    which all seven portfolios are directly comparable."""
+    Kanal Finans TŞ and Trend Takip are listed here too: they make no
+    directional calls so their accuracy cells stay empty, but "what did $1000
+    become" is the one axis on which all eight portfolios are directly
+    comparable."""
     headers = ("Strateji", "İsabet", "Değer", "Bugün", "Toplam", "İşlem")
     header_html = "".join(
         f'<th style="padding:8px 10px;font-size:11px;color:{MUTED};text-align:left;'
