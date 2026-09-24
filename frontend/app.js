@@ -176,6 +176,14 @@ function formatPnl(pnl) {
   return showPnlInDollars ? `${sign}$${magnitude}` : `${sign}${magnitude}%`;
 }
 
+// For free text that comes from the DB (trade reasons, YouTube titles,
+// Claude's summaries) before it goes into innerHTML -- a momentum reason like
+// "Trend kirildi (ema9<ema21)" was being parsed as a tag and rendered cut off
+// as "Trend kirildi (ema9".
+function escapeHtml(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 function fmtTime(iso) {
   return new Date(iso).toLocaleString("tr-TR", {
     day: "2-digit",
@@ -437,11 +445,11 @@ function renderKanalFinans(mentions) {
     <div class="kanal-finans-item">
       <div class="kanal-finans-meta">
         <span class="muted small">${fmtTime(m.published_at)}</span>
-        <a href="https://youtu.be/${m.video_id}" target="_blank" rel="noopener">${m.video_title || "Video"}</a>
+        <a href="https://youtu.be/${m.video_id}" target="_blank" rel="noopener">${escapeHtml(m.video_title || "Video")}</a>
       </div>
       <div class="kanal-finans-body">
         <span class="asset-badge">${m.asset}</span>
-        <span class="kanal-finans-summary">${m.summary}</span>
+        <span class="kanal-finans-summary">${escapeHtml(m.summary)}</span>
         <span class="stance stance-${KANAL_FINANS_STANCE_CLASSES[m.stance] || "neutral"}">${KANAL_FINANS_STANCE_LABELS[m.stance] || m.stance}</span>
       </div>
     </div>`).join("");
@@ -475,7 +483,7 @@ function renderKanalFinansPortfolio(state, trades, livePrice) {
           <tr>
             <td>${fmtTime(t.created_at)}</td>
             <td class="${sideClass}">${sideText}<span class="sub">${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)}</span></td>
-            <td><span class="sub">${t.reason ?? ""}</span></td>
+            <td><span class="sub">${escapeHtml(t.reason)}</span></td>
           </tr>`;
       }).join("");
 
@@ -582,7 +590,7 @@ function renderMomentumPortfolio(state, trades, livePrice) {
           <tr>
             <td>${fmtTime(t.created_at)}</td>
             <td class="${sideClass}">${sideText}<span class="sub">${Number(t.xrp_amount).toFixed(1)} XRP @ ${fmtPrice(t.price)}</span></td>
-            <td><span class="sub">${t.reason ?? ""}</span></td>
+            <td><span class="sub">${escapeHtml(t.reason)}</span></td>
           </tr>`;
       }).join("");
 
