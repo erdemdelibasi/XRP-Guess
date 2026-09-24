@@ -87,6 +87,70 @@ def fetch_predictions_in_window(db, start: datetime, end: datetime) -> list[dict
     return res.data
 
 
+# A gap this long between consecutive prediction runs means the system was
+# down, not merely late. Measured on 1362 live runs (2026-09-08..09-24): cron
+# jitter plus one skipped run tops out around 40 min (a single 49-min case);
+# the only gap over 60 min was the 2026-09-19..21 GitHub Actions account lock
+# -- 32 hours with no predictions, no portfolio decisions, no stop-loss
+# checks, and no mention of it in any report, because that day's report was
+# blocked by the same lock.
+MAX_RUN_GAP = timedelta(minutes=60)
+
+
+def find_run_gaps(run_times: list[datetime], window_end: datetime,
+                  max_gap: timedelta = MAX_RUN_GAP) -> list[tuple[datetime, datetime]]:
+    """Pure. `run_times` is sorted and should start with the last run BEFORE
+    the report window, so a gap that began earlier (e.g. one that also
+    blocked yesterday's report) is shown with its real start. A trailing
+    (last_run, window_end) gap means runs had stopped and not yet resumed."""
+    gaps = [(a, b) for a, b in zip(run_times, run_times[1:]) if b - a > max_gap]
+    if run_times and window_end - run_times[-1] > max_gap:
+        gaps.append((run_times[-1], window_end))
+    return gaps
+
+
+def run_health(db, rows: list[dict], start: datetime, end: datetime) -> dict:
+    """Continuity of the quarter-hourly prediction runs over the report
+    window. Every predict.py run that gets past its idempotency check writes
+    one `predictions` row, so a gap in created_at is a gap in everything that
+    run does (predictions, all eight portfolios' decisions, stop-loss checks)."""
+    before = (
+        db.table("predictions").select("created_at")
+        .lt("created_at", start.isoformat())
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    times = sorted(datetime.fromisoformat(r["created_at"]) for r in [*before.data, *rows])
+    in_window = [t for t in times if t >= start]
+    diffs = [b - a for a, b in zip(in_window, in_window[1:])]
+    if in_window:
+        diffs.append(end - in_window[-1])
+    return {
+        "gaps": find_run_gaps(times, end),
+        "longest": max(diffs, default=None),
+        "window_end": end,
+    }
+
+
+def _duration_text(delta: timedelta) -> str:
+    minutes = delta.total_seconds() / 60
+    return f"{minutes / 60:.1f} saat" if minutes >= 120 else f"{minutes:.0f} dk"
+
+
+def _gap_text(gap: tuple[datetime, datetime], window_end: datetime) -> str:
+    """"20 Eylül 01:50 → 21 Eylül 10:29 (32.6 saat)" in Turkey time."""
+    def fmt(t: datetime) -> str:
+        return f"{t.day} {TR_MONTHS[t.month - 1]} {t:%H:%M}"
+
+    a, b = (t.astimezone(TIMEZONE) for t in gap)
+    if gap[1] == window_end:
+        return f"{fmt(a)} → hâlâ sürüyordu ({b:%H:%M} itibarıyla, {_duration_text(b - a)})"
+    return f"{fmt(a)} → {fmt(b)} ({_duration_text(b - a)})"
+
+
+GAP_EXPLANATION = ("Bu sürede tahmin üretilmedi, portföy kararları ve stop-loss kontrolleri çalışmadı. "
+                   "Sebebi için GitHub'da Actions sekmesindeki başarısız koşulara bakın.")
+
+
 def component_accuracy(rows: list[dict], component: str) -> tuple[float | None, int]:
     """Same abstention rule as retrain.py: a row only counts if that
     component actually had a non-zero-confidence opinion."""
@@ -287,6 +351,12 @@ def build_report(db) -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"WARNING: momentum row skipped ({exc})")
 
+    try:
+        health = run_health(db, rows, start, end)
+    except Exception as exc:  # noqa: BLE001 -- a monitoring line must never cost the mail
+        print(f"WARNING: run health check skipped ({exc})")
+        health = None
+
     weights, _ = get_ensemble_state(db)  # rapor sadece gosterim ağırlıklarını kullanıyor
 
     return {
@@ -295,6 +365,7 @@ def build_report(db) -> dict:
         "components": components,
         "strategies": strategies,
         "kanal_finans": kanal_finans,
+        "health": health,
         "price_start": price_start, "price_now": price_now,
         "weights": weights,
     }
@@ -304,8 +375,13 @@ def render_text(report: dict) -> str:
     lines = [
         "Merhaba Erdem,", "",
         f"Dün {report['start'].strftime('%H:%M')} - bugün {report['end'].strftime('%H:%M')} arasında:", "",
-        "TAHMİNLER",
     ]
+    health = report.get("health")
+    if health and health["gaps"]:
+        lines.append("!! SİSTEM KESİNTİSİ")
+        lines += [f"- {_gap_text(g, health['window_end'])}" for g in health["gaps"]]
+        lines += [f"  {GAP_EXPLANATION}", ""]
+    lines.append("TAHMİNLER")
     if report["resolved"] > 0:
         acc_pct = report["correct"] / report["resolved"] * 100
         lines.append(
@@ -318,6 +394,8 @@ def render_text(report: dict) -> str:
     acc_o, count_o = report["components"]["orderbook"]
     orderbook_text = f"%{acc_o * 100:.1f} ({count_o})" if acc_o is not None else "yeterli veri yok"
     lines.append(f"- Emir defteri (kendi portföyü yok): {orderbook_text}")
+    if health and not health["gaps"] and health["longest"] is not None:
+        lines.append(f"- Koşu sürekliliği: kesintisiz (en uzun ara {_duration_text(health['longest'])})")
 
     present = [s for s in REPORT_STRATEGIES if s in report["strategies"]]
     lines += ["", f"{len(present)} PORTFÖY PERFORMANSI (her biri kendi $1000 ile)"]
@@ -525,6 +603,21 @@ def render_html(report: dict) -> str:
     orderbook_text = f"%{acc_o * 100:.1f} <span style=\"color:{MUTED};\">({count_o})</span>" if acc_o is not None else f'<span style="color:{MUTED};">veri yok</span>'
     pred_rows.append(_row("Emir defteri (kendi portföyü yok)", orderbook_text))
 
+    health = report.get("health")
+    health_card = ""
+    if health and health["gaps"]:
+        gap_rows = [_row("Kesinti", f'<span style="color:{DOWN};font-weight:600;">{_gap_text(g, health["window_end"])}</span>')
+                    for g in health["gaps"]]
+        gap_rows.append(f'<tr><td colspan="2" style="padding:6px 16px 10px;font-size:12px;color:{MUTED};'
+                        f'border-top:1px solid {BORDER};">{GAP_EXPLANATION}</td></tr>')
+        health_card = _card("⚠️ SİSTEM KESİNTİSİ", gap_rows)
+        pred_rows.append(_row("Koşu sürekliliği", f'<span style="color:{DOWN};font-weight:600;">kesinti var (yukarıda)</span>'))
+    elif health and health["longest"] is not None:
+        pred_rows.append(_row(
+            "Koşu sürekliliği",
+            f'<span style="color:{UP};">kesintisiz</span> <span style="color:{MUTED};">(en uzun ara {_duration_text(health["longest"])})</span>',
+        ))
+
     if report["price_start"] is not None:
         price_pct = (report["price_now"] - report["price_start"]) / report["price_start"] * 100
         price_rows = [
@@ -549,7 +642,8 @@ def render_html(report: dict) -> str:
 
     kf = report.get("kanal_finans")
     body = (
-        _card("📊 TAHMİNLER", pred_rows)
+        health_card
+        + _card("📊 TAHMİNLER", pred_rows)
         + _strategy_table(report)
         + (_kanal_finans_card(kf) if kf is not None else "")
         + _card("💹 XRP/USDT FİYATI", price_rows)
@@ -582,6 +676,8 @@ def render_html(report: dict) -> str:
 
 def render_email(report: dict) -> tuple[str, str, str]:
     subject = f"XRP-Guess - Günlük Özet ({format_tr_date(report['end'])})"
+    if (report.get("health") or {}).get("gaps"):
+        subject = "⚠️ Kesinti - " + subject
     return subject, render_text(report), render_html(report)
 
 

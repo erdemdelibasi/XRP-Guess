@@ -395,6 +395,24 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   aynısını yapabilir) filtresiz hali maile 37 satır eski özet dolduruyordu.
   Bölümün tamamı fail-soft: kanal finans tabloları yoksa/Supabase hıçkırırsa
   kart düşer, mailin geri kalanı yine gider.
+  **Kesinti alarmı** (`find_run_gaps`, `MAX_RUN_GAP` = 60 dk, 2026-09-24):
+  2026-09-19 22:37 → 09-21 07:30 UTC arası GitHub Actions hesap düzeyinde
+  kilitlendi ("recent account payments have failed or your spending limit
+  needs to be increased" — repo public, kullanıcı GitHub'a ödeme yapmıyor,
+  sebep netleşmedi; GitHub'ın durum sayfasında o tarihte bir olay yok).
+  32 saat boyunca tahmin, sekiz portföyün kararları ve stop-loss kontrolleri
+  durdu, ve bunu hiçbir rapor söylemedi, çünkü o günün raporu da aynı kilide
+  takıldı. Artık mail, pencere öncesindeki son koşudan başlayarak ardışık
+  `predictions.created_at` aralıklarına bakıyor; 60 dk üstü bir boşluk varsa
+  en üste kırmızı bir kart koyuyor ve konu satırına "⚠️ Kesinti" ekliyor.
+  Eşik ölçüldü: 1362 canlı koşuda cron gecikmesi + tek kaçan koşu en fazla
+  ~40 dk (bir kez 49), 60 dk üstündeki tek boşluk gerçek kesintiydi.
+  Başarısız bir raporu kapsayan kesinti ertesi günün penceresinde biter
+  (başlangıcı önceki güne taşsa bile gerçek başlangıcıyla gösterilir), yani
+  bir kesinti ya bir raporda görünür ya da hâlâ sürüyordur. Momentum için
+  bir ders: kesinti sırasında pozisyon açıktı ve sistem çalışsaydı 09-20
+  01:31'de ~1,398'den "trend kırıldı" ile çıkılacaktı; kesinti portföye
+  ~$18-36 kazandırdı. O dönemin portföy sonuçlarını buna göre oku.
 
 - **Altı bağımsız $1000 kağıt-portföy** (`trading.py`): orijinal ensemble
   portföyü (`portfolio_state`/`trades`, id=1, hiç değişmedi) artı beş
