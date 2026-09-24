@@ -382,6 +382,9 @@ tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
   border-top: 1px solid var(--border);
 }
 #kanal-finans-portfolio .strategy-portfolio { border-top: none; padding-top: 0; }
+.momentum-stats { margin: 6px 0 0; line-height: 1.5; }
+.momentum-stats .up { color: var(--up); font-weight: 600; }
+.momentum-stats .down { color: var(--down); font-weight: 600; }
 
 .disclaimer {
   margin-top: 8px;

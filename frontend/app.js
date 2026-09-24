@@ -103,8 +103,10 @@ async function fetchMomentumPortfolio() {
   return rows[0] ?? null;
 }
 
-async function fetchMomentumTrades(limit = 10) {
-  const url = `${CONFIG.SUPABASE_URL}/rest/v1/momentum_trades?select=*&order=created_at.desc&limit=${limit}`;
+// All of them, not just the table's last 10 -- the round-trip stats on the
+// card need the full ledger. Tiny table (~2 trades a week), no paging needed.
+async function fetchMomentumTrades() {
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/momentum_trades?select=*&order=created_at.desc`;
   const res = await fetch(url, { headers: supabaseHeaders() });
   if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
   return res.json();
@@ -488,6 +490,61 @@ function renderKanalFinansPortfolio(state, trades, livePrice) {
     </div>`;
 }
 
+// The momentum portfolio's $1000 starting point: the first predict.py run
+// after momentum_trading.py shipped (commit 70f7504). XRP's price at that run
+// (its predictions.price_at_prediction) is the buy-and-hold baseline the card
+// compares against -- a fixed historical fact, so hardcoded, not refetched.
+const MOMENTUM_START = { iso: "2026-09-04T08:27:13Z", price: 1.4489 };
+
+// Portfolio-level return of each completed BUY->SELL round trip, oldest
+// first. compute_decision() is binary (every BUY enters from all-cash, every
+// SELL exits fully), so a trip's result is just the cash after its SELL vs.
+// the cash right before its BUY. An open position isn't a completed trip.
+function momentumRoundTrips(tradesDesc) {
+  const trips = [];
+  let cashBefore = PORTFOLIO_START;
+  let entryCash = null;
+  for (const t of [...tradesDesc].reverse()) {
+    if (t.side === "BUY") {
+      entryCash = cashBefore;
+    } else if (entryCash != null) {
+      trips.push(Number(t.cash_after) / entryCash - 1);
+      entryCash = null;
+    }
+    cashBefore = Number(t.cash_after);
+  }
+  return trips;
+}
+
+function renderMomentumStats(value, trades, livePrice) {
+  const colored = (pct, text) => `<span class="${pct >= 0 ? "up" : "down"}">${text}</span>`;
+  const signed = (pct) => `${pct >= 0 ? "+" : "-"}${Math.abs(pct * 100).toFixed(2)}%`;
+
+  const lines = [];
+  if (livePrice != null) {
+    const ret = value / PORTFOLIO_START - 1;
+    const buyHold = livePrice / MOMENTUM_START.price - 1;
+    const edge = (ret - buyHold) * 100;
+    lines.push(
+      `Başlangıçtan beri (${fmtTime(MOMENTUM_START.iso)}): ${colored(ret, signed(ret))}`
+      + ` · Aynı dönemde XRP al-ve-tut: ${colored(buyHold, signed(buyHold))}`
+      + ` · Fark: ${colored(edge, `${edge >= 0 ? "+" : "-"}${Math.abs(edge).toFixed(2)} puan`)}`,
+    );
+  }
+
+  const trips = momentumRoundTrips(trades ?? []);
+  if (trips.length) {
+    const wins = trips.filter((r) => r > 0).length;
+    const best = Math.max(...trips);
+    const worst = Math.min(...trips);
+    lines.push(
+      `${trips.length} tamamlanan tur: ${wins} kârlı / ${trips.length - wins} zararlı`
+      + ` · en iyi ${colored(best, signed(best))} · en kötü ${colored(worst, signed(worst))}`,
+    );
+  }
+  return lines.length ? `<p class="momentum-stats muted small">${lines.join("<br>")}</p>` : "";
+}
+
 function renderMomentumPortfolio(state, trades, livePrice) {
   const container = document.getElementById("momentum-portfolio");
   if (!state) {
@@ -518,7 +575,7 @@ function renderMomentumPortfolio(state, trades, livePrice) {
 
   const tradesRows = !trades || trades.length === 0
     ? '<tr><td colspan="3" class="muted center">Henüz işlem yok</td></tr>'
-    : trades.map((t) => {
+    : trades.slice(0, 10).map((t) => {
         const sideClass = t.side === "BUY" ? "up" : "down";
         const sideText = t.side === "BUY" ? "AL" : "SAT";
         return `
@@ -534,6 +591,7 @@ function renderMomentumPortfolio(state, trades, livePrice) {
       <span class="value">${fmtPrice(value)}</span>
       <span class="muted small">${positionText}</span>
     </div>
+    ${renderMomentumStats(value, trades, livePrice)}
     ${levels.length ? `<p class="muted small">${levels.join(" · ")}</p>` : ""}
     <div class="table-wrap">
       <table><thead><tr><th>Zaman</th><th>İşlem</th><th>Neden</th></tr></thead><tbody>${tradesRows}</tbody></table>
