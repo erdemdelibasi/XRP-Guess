@@ -1,9 +1,25 @@
 name: Quarter-Hourly XRP Prediction
 
+# PRIMARY trigger is no longer this file's `schedule:` -- it is
+# backend/trigger_predict.ps1, running every 15 minutes from the user's own
+# machine via `gh workflow run` (workflow_dispatch). Measured 2026-09-27..29:
+# a true 15-minute native `schedule:` silently degraded to firing roughly
+# every 5 hours for 40+ hours, mirroring a previously-documented 32-hour
+# "account lock" from 2026-09-19..21 (see XRP-Guess/backend/daily_report.py's
+# MAX_RUN_GAP comment) -- GitHub deprioritising a very-frequent `schedule:`
+# event, not a bug here. workflow_dispatch is a normal API call, not a
+# `schedule:` event, so it does not inherit that delay.
+#
+# The `schedule:` below is now the FALLBACK, for whenever the local machine
+# is asleep at a Task Scheduler trigger (a skipped trigger is silently
+# dropped, not queued). It is hourly on purpose, not 15-minute -- GitHub's
+# own guidance is that short-interval schedules are the unreliable case, and
+# this project already had one 40+ hour outage from running one. predict.py's
+# unique(symbol, target_time) guard makes the two triggers safe to overlap.
 on:
   schedule:
-    - cron: "1,16,31,46 * * * *"  # 1 minute after each 15-min mark (UTC)
-  workflow_dispatch: {}   # allows manual "Run workflow" trigger for testing
+    - cron: "5 * * * *"  # hourly fallback, 5 minutes past the hour (UTC)
+  workflow_dispatch: {}   # what trigger_predict.ps1 calls, and what "Run workflow" uses for manual testing
 
 permissions:
   contents: read

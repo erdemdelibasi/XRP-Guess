@@ -8,7 +8,10 @@ Portföy özelliği tamamen sanal/kağıt üzerindedir ($1000 simülasyon).
 
 ```
 GitHub Actions (cron, sunucusuz zamanlayıcı)
-  -> backend/predict.py       her 15 dk (:01/:16/:31/:46) çalışır
+  -> backend/predict.py       tetikleyicisi artık ASIL OLARAK bu değil --
+                             bkz. aşağıdaki "predict.py'nin tetikleyicisi"
+                             notu. workflow_dispatch ile çalışır; kendi
+                             schedule'i artık saatlik bir YEDEK (:05 UTC).
   -> backend/retrain.py       her gün 03:30 UTC çalışır
   -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC) çalışır, Gmail SMTP ile mail atar
 
@@ -20,6 +23,12 @@ bkz. aşağıdaki Kanal Finans notu)
   -> backend/run_kanal_finans.ps1 -> kanal_finans.py   her 15 dk, YouTube'a
                              HİÇ gitmez -- sadece fetcher'ın yazdığı bekleyen
                              görüşleri portföye uygular, ensemble'dan bağımsız
+  -> backend/trigger_predict.ps1              her 15 dk (2026-09-29'dan beri)
+                             -- predict.py'nin ASIL tetikleyicisi, `gh workflow
+                             run` ile GitHub Actions'taki predict.yml'i
+                             workflow_dispatch olarak ateşler. Hesaplama yine
+                             GitHub'ın runner'ında çalışır, bu makine sadece
+                             tek bir API çağrısı yapar (bkz. aşağıdaki not).
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)
@@ -36,6 +45,49 @@ Vercel (frontend/ statik hosting, GitHub push'unda otomatik deploy)
   değişiklik yaparsan bu dosyayı güncelle VE kullanıcıya Supabase SQL
   Editor'de çalıştırması gereken migration'ı ayrıca ver (repo'dan otomatik
   uygulanmaz).
+
+### predict.py'nin tetikleyicisi: yerel `gh workflow run`, GitHub'ın kendi `schedule:`'i değil
+
+**2026-09-27 15:09 UTC'den 2026-09-29'a kadar (40+ saat) `Quarter-Hourly XRP
+Prediction` iş akışı 15 dakikada bir değil, ortalama her 5 saatte bir
+çalıştı** (56 koşuluk pencerede ölçüldü: 27 Eylül 02:52-15:09 arası 47 koşu
+— gerçek 15dk kadans —, 15:09'dan sonraki 37+ saatte sadece 7 koşu). Çalışan
+her koşu **başarılı** döndü — `predict.py`'de, `predict.yml`'de bir hata
+yoktu. Bu, bu depoda önce de görülmüş bir arıza sınıfının tekrarı:
+`daily_report.py`'nin `MAX_RUN_GAP` yorumu 19-21 Eylül'de 32 saatlik bir
+"GitHub Actions hesap kilidi" olduğunu kaydediyor. GitHub'ın çok sık
+(15 dakikada bir) tetiklenen `schedule:` olaylarını sessizce geciktirip
+düşürmesi — bilinen, dokümante edilmemiş ama tekrarlayan bir platform
+davranışı, kod tarafında düzeltilecek bir hata değil.
+
+**Kalıcı çözüm (2026-09-29): tetikleyici yerel makineye taşındı, hesaplama
+değil.** `backend/trigger_predict.ps1`, Windows Task Scheduler'dan her 15
+dakikada bir çalışıp `gh workflow run predict.yml --repo erdemdelibasi/XRP-Guess`
+komutuyla `predict.yml`'i **workflow_dispatch** olarak tetikliyor.
+`workflow_dispatch` normal bir API çağrısıdır, `schedule:` olayı değildir —
+GitHub'ın düşük öncelikli zamanlayıcı gecikmesine tabi değil, bir push kadar
+hızlı kuyruğa giriyor. Hesaplamanın kendisi hâlâ GitHub'ın runner'ında,
+ücretsiz public-repo Actions dakikalarıyla çalışıyor — bu makine sadece tek
+bir API çağrısı yapıyor, `kanal_finans.py`'den farklı olarak YouTube'a falan
+gitmiyor, yani gerçek bir hesaplama yükü taşımıyor.
+
+`predict.yml` kendi `schedule:`'ini **kaldırmadı, saatlik bir YEDEĞE
+indirdi** (`5 * * * *`) — yerel makine bir Task Scheduler tetikleyicisinde
+uyurken diye (`run_kanal_finans.ps1`'in belgelediği gibi, kaçan bir
+tetikleyici sessizce düşer, kuyruğa girmez). Saatlik seçildi, 15 dakikalık
+değil: bu projenin kendi ölçtüğü arıza tam olarak "çok sık `schedule:`
+güvenilmez" idi, aynı hatayı yedekte tekrarlamanın anlamı yok. İki tetikleyici
+de güvenle çakışabilir: `predict.py`'nin kendi `unique(symbol, target_time)`
+koruması, aynı 15 dakikalık dilim için ikinci gelen çağrıyı yinelenen diye
+atlıyor.
+
+`backend/trigger_predict_hidden.vbs`, `run_kanal_finans_hidden.vbs` ile aynı
+sebeple var: `WScript.Shell.Run` stil 0 pencereyi hiç oluşturmuyor,
+`-WindowStyle Hidden`in kısa flaşını önlüyor. Task Scheduler görevi
+(`XRP-Guess Predict Trigger`) `kanal_finans.py`'nin görevindeki aynı
+ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
+çalışır, çünkü `gh` kimlik doğrulaması Windows Credential Manager'a bağlı),
+`MultipleInstancesPolicy=IgnoreNew`, `StartWhenAvailable=true`.
 
 ## Önemli kısıtlar
 
