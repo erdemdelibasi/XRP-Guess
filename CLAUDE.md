@@ -702,14 +702,13 @@ ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
   geçilmesi bekleniyor, geçilirse alım fırsatı olabilir"`), yani
   direnç=otomatik-sat sabit kuralı bazı durumlarda tam tersini yapardı; sadece
   zarar-kes (destek) seviyesi otomatik SELL tetikler. **Geçmişe dönük
-  başlangıç**: `backend/backfill_kanal_finans_portfolio.py`
-  (`workflow_dispatch` yok, tek seferlik, elle yerelde çalıştırılır — YouTube'a
-  hiç dokunmuyor ama transkript arşivi tutulmuyor, o yüzden zaten var olan
-  `kanal_finans_mentions.summary` metninden yapılandırılmış alanları küçük bir
-  Claude çağrısıyla geriye dönük çıkarır) `kanal_finans_mentions`'daki XRP
-  satırlarını kronolojik sırayla gerçek 15dk Binance mumlarına (`fetch_data.py`)
-  karşı replay eder — `backfill_strategy_portfolios.py` ile aynı desen
-  (in-memory replay, idempotent, sonunda tek seferde DB'ye yaz).
+  başlangıç**: portföy bir kez, tek seferlik bir betikle
+  (`backend/backfill_kanal_finans_portfolio.py`) `kanal_finans_mentions`'daki
+  XRP satırlarını kronolojik sırayla gerçek 15dk Binance mumlarına karşı
+  replay ederek kuruldu. Eski satırların yapılandırılmış alanlarını ücretli
+  API'ye küçük bir Claude çağrısıyla çıkarttırıyordu. Bu yüzden **2026-10-05'te
+  silindi**: iş çoktan yapılmıştı ve ücretli API istenmiyor. Gerekirse git
+  geçmişinde duruyor.
 
   **Ölçek hatasına karşı olurluk (plausibility) koruması** (2026-09-09):
   fetcher'ın ses-tabanlı (Whisper) transkripsiyona geçtiği (bkz. yukarıdaki

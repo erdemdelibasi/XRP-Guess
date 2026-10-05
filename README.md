@@ -65,11 +65,10 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
    çalışmıyor** — YouTube, GitHub Actions'ın bulut IP'sinden gelen transkript
    isteklerini doğrudan engelliyor (canlıda doğrulandı). Bunun yerine kendi
    bilgisayarından çalışır, kurulumu için "Kanal Finans TŞ'yi kendi
-   bilgisayarından çalıştırma" bölümüne bak. (Alternatif: bir proxy servisine
-   -- ör. webshare.io'da "Residential" paket -- erişimin varsa
-   `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD` secret'larını
-   ekleyip `kanal_finans.yml`'e `schedule:` tetikleyicisini geri koyarak
-   bunu GitHub Actions'a taşıyabilirsin.)
+   bilgisayarından çalıştırma" bölümüne bak. (Eski proxy alternatifi ve onu
+   bekleyen elle-tetiklenen `kanal_finans.yml` 2026-10-05'te kaldırıldı:
+   YouTube tarafı artık `../Kanal-Finans-Fetcher`'da, bu repo yalnızca
+   görüşleri portföye uyguluyor.)
 3. **Actions** sekmesinden `Quarter-Hourly XRP Prediction` workflow'unu aç, sağ
    üstten **Run workflow** ile bir kez manuel tetikleyip loglardan hatasız
    çalıştığını doğrula. Bu ilk çalışmada model henüz yoksa otomatik olarak
