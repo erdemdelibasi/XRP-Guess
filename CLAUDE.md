@@ -12,12 +12,14 @@ GitHub Actions (cron, sunucusuz zamanlayıcı)
                              bkz. aşağıdaki "predict.py'nin tetikleyicisi"
                              notu. workflow_dispatch ile çalışır; kendi
                              schedule'i artık saatlik bir YEDEK (:05 UTC).
-  -> backend/retrain.py       her gün 03:30 UTC çalışır
-  -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC) çalışır, Gmail SMTP ile mail atar
+  -> backend/retrain.py       her gün 03:30 UTC (06:30 TRT) -- cron'u
+                             2026-10-05'ten beri YEDEK, bkz. trigger_workflow.ps1
+  -> backend/daily_report.py  her gün 18:10 TRT (15:10 UTC), Gmail SMTP ile
+                             mail atar -- cron'u 2026-10-05'ten beri YEDEK
 
 Kullanıcının kendi bilgisayarı (Windows Task Scheduler -- GitHub Actions DEĞİL,
 bkz. aşağıdaki Kanal Finans notu)
-  -> ../Kanal-Finans-Fetcher/fetcher.py   her 30 dk -- YouTube'dan TEK çekiş,
+  -> ../Kanal-Finans-Fetcher/fetcher.py   01:00/07:00/13:00/19:00 -- YouTube'dan TEK çekiş,
                              XAU-Guess'le PAYLAŞILAN sibling repo, iki projeye
                              de kendi şemasıyla yazar (bkz. o reponun README'si)
   -> backend/run_kanal_finans.ps1 -> kanal_finans.py   her 15 dk, YouTube'a
@@ -29,6 +31,21 @@ bkz. aşağıdaki Kanal Finans notu)
                              workflow_dispatch olarak ateşler. Hesaplama yine
                              GitHub'ın runner'ında çalışır, bu makine sadece
                              tek bir API çağrısı yapar (bkz. aşağıdaki not).
+  -> backend/trigger_workflow_hidden.vbs -> trigger_workflow.ps1 -Workflow X
+                             (2026-10-05'ten beri) aynı fikir, günlük işler
+                             için, korumalı:
+                               "XRP-Guess Retrain Trigger" daily_retrain.yml 06:30
+                               "XRP-Guess Report Trigger"  daily_report.yml  18:10
+                             Ölçüldü (28.09-05.10): eğitim cron'u 03:30Z yerine
+                             09:17-10:40Z'de, rapor cron'u 15:10Z yerine
+                             18:37-21:12Z'de başlıyordu -- mail 3,5-6 saat geç.
+                             predict.yml'in aksine bunlar çakışmaya karşı
+                             güvenli DEĞİL (iki rapor koşusu = iki mail), o
+                             yüzden iki yönlü koruma var: betik son 12 saatte
+                             bir koşu varsa tetiklemez, cron koşusu da (gate
+                             işi, AYNI 12 saat) tetiklenmiş bir koşu varsa
+                             kendini atlar. XAU-Guess/backend/trigger_workflow.ps1'in
+                             kopyası; koruma mantığına bir düzeltme ikisine de gider.
        |
        v
 Supabase (Postgres + otomatik REST API, RLS ile korunur)

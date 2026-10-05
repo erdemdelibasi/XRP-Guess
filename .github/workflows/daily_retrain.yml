@@ -9,7 +9,41 @@ permissions:
   contents: write  # needed to commit the retrained model file back to the repo
 
 jobs:
+  # Stand-down gate. Since 2026-10-05 the PRIMARY trigger is a
+  # workflow_dispatch from the user's machine (Task Scheduler "XRP-Guess
+  # Retrain Trigger", daily 06:30 TR = this cron's 03:30 UTC), because the
+  # cron had drifted to starting at 09:17-10:40 UTC. The cron stays as the
+  # fallback for a day that machine is off. Only a SCHEDULED run checks, and
+  # it looks only for DISPATCHED runs; backend/trigger_workflow.ps1 guards
+  # the other order and replays this rule, so the 12 hours must match its
+  # -WindowHours. A second run would be harmless but wasted, and a second
+  # commit.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Stand down if this slot was already dispatched
+        id: check
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cutoff=$(date -u -d '12 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh run list -R "$GITHUB_REPOSITORY" -w daily_retrain.yml --event workflow_dispatch -L 20 \
+                --json createdAt,conclusion \
+                --jq "[.[] | select(.createdAt >= \"$cutoff\" and .conclusion != \"failure\" and .conclusion != \"cancelled\")] | length")
+          echo "dispatched daily_retrain.yml runs since $cutoff: $n"
+          if [ "$n" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Standing down: this slot was dispatched from the user's machine."
+          fi
+
   retrain:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
