@@ -2,8 +2,16 @@
 final prediction, weighted by each component's recent track record."""
 import math
 
-COMPONENTS = ["technical", "ml", "whale", "news", "orderbook", "claude"]
-DEFAULT_WEIGHTS = {"technical": 0.24, "ml": 0.24, "whale": 0.12, "news": 0.10, "orderbook": 0.15, "claude": 0.15}
+# `claude` (an LLM judgment call) was the sixth until 2026-10-05, removed at the
+# user's request. Its record at removal: 49.8% lifetime (1188/2387 non-abstaining
+# calls), 50.6% over the 14-day window (870) -- a coin flip that still drew
+# 15.6% of the pool's evidence. Its key had been revoked on 10-02, so it had
+# abstained every cycle since and removing it changed no live call. Its
+# predictions columns, model_state row and frozen portfolio stay as history.
+COMPONENTS = ["technical", "ml", "whale", "news", "orderbook"]
+# Cold-start/display only (see combine()); kept summing to 1.0 -- the old
+# 0.15 claude share spread back proportionally.
+DEFAULT_WEIGHTS = {"technical": 0.28, "ml": 0.28, "whale": 0.14, "news": 0.12, "orderbook": 0.18}
 # Log-odds pooling (see combine()). All three were measured on live data
 # rather than picked -- the reasoning and the numbers are in combine()'s
 # docstring, and re-measuring them is the right move once the live history is
@@ -25,7 +33,7 @@ CORRELATION_DAMPING = 0.7  # components aren't independent; undamped the pool is
 # So it stays off: unproven, resting on ~3 days of history (if whale/claude
 # are truly 50% coin flips, inverting them is memorising noise), and it
 # produces behaviour that can't be defended to a person looking at the UI --
-# all six components saying UP while the blend prints DOWN.
+# every component saying UP while the blend prints DOWN.
 #
 # Revisit with a few weeks of live history: if a component is still clearly
 # sub-50% over a few hundred resolved rows, flip this back on and re-measure.
@@ -34,7 +42,7 @@ ALLOW_INVERSION = False
 # predictions-table column prefix per component. "technical" is shortened to
 # "tech" there to keep column names compact; every other component's columns
 # use its own name as-is.
-COLUMN_PREFIX = {"technical": "tech", "ml": "ml", "whale": "whale", "news": "news", "orderbook": "orderbook", "claude": "claude"}
+COLUMN_PREFIX = {"technical": "tech", "ml": "ml", "whale": "whale", "news": "news", "orderbook": "orderbook"}
 
 
 def reliability(correct: int, total: int) -> float:

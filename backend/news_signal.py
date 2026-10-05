@@ -103,9 +103,7 @@ def _fetch_headlines() -> list[dict]:
 
 def recent_headlines() -> list[dict]:
     """Fetches and returns raw headlines (title + published time) from the
-    last LOOKBACK_HOURS, newest data only -- shared with claude_signal.py,
-    which wants the actual headline text to reason over rather than just
-    this module's keyword-count score. Empty list on any fetch/parse
+    last LOOKBACK_HOURS, newest data only. Empty list on any fetch/parse
     failure, same fail-soft contract as news_signal() itself."""
     try:
         headlines = _fetch_headlines()

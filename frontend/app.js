@@ -19,7 +19,7 @@ let showPnlInDollars = false;
 // baseline in the meantime).
 const RANGE_PNL_CACHE = { days: null, boundaries: null, price: null };
 
-const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news", "claude"]; // matches backend trading.STRATEGIES
+const SINGLE_SIGNAL_STRATEGIES = ["technical", "ml", "whale", "news"]; // matches backend trading.STRATEGIES
 
 function supabaseHeaders() {
   return {
@@ -214,14 +214,13 @@ function renderWeightsSummary(predictions) {
   const latest = predictions[0];
   const weights = document.getElementById("weights-summary");
   if (latest && latest.weight_technical != null) {
-    const labels = { technical: "Teknik", ml: "ML", whale: "Balina", news: "Haber", orderbook: "Emir Defteri", claude: "Claude" };
+    const labels = { technical: "Teknik", ml: "ML", whale: "Balina", news: "Haber", orderbook: "Emir Defteri" };
     const raw = [
       ["technical", latest.weight_technical],
       ["ml", latest.weight_ml],
       ["whale", latest.weight_whale],
       ["news", latest.weight_news],
       ["orderbook", latest.weight_orderbook],
-      ["claude", latest.weight_claude],
     ].filter(([, v]) => v != null);
     // Ağırlıklar işaretli gelir: negatif = o bileşen ölçülen geçmişinde
     // sürekli yanılmış ve harmanda TERS okunuyor (bkz. backend/ensemble.py
@@ -279,10 +278,6 @@ const STRATEGY_CONFIG = {
   ml: { label: "Sadece ML", dirField: "ml_direction", confField: "ml_confidence", pctField: "ml_pct_change", priceField: "ml_price", correctField: "ml_correct" },
   whale: { label: "Sadece Balina", dirField: "whale_direction", confField: "whale_confidence", pctField: "whale_pct_change", priceField: "whale_price", correctField: "whale_correct", abstains: true },
   news: { label: "Sadece Haber", dirField: "news_direction", confField: "news_confidence", pctField: "news_pct_change", priceField: "news_price", correctField: "news_correct", abstains: true },
-  // claude_signal.py also returns the placeholder direction "UP" (its
-  // NEUTRAL constant) when no API key is configured yet or a call fails --
-  // same meaningless-direction-at-confidence-0 case as whale/news above.
-  claude: { label: "Sadece Claude", dirField: "claude_direction", confField: "claude_confidence", pctField: "claude_pct_change", priceField: "claude_price", correctField: "claude_correct", abstains: true },
 };
 
 const strategyPieCharts = {};

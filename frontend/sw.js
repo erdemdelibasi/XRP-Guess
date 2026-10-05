@@ -1,4 +1,4 @@
-const CACHE_NAME = "xrp-guess-v19";
+const CACHE_NAME = "xrp-guess-v20";
 const SHELL_FILES = [
   "./",
   "./index.html",

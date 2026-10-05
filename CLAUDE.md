@@ -239,14 +239,29 @@ ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
   self-join bir ara id'ye yönlendirip onu da silinecek satırlardan
   yapabilirdi (aynı FK hatasını bir adım sonra tekrar üretir). Güncel
   migration metni `schema.sql`'de.
-- Yön sinyali altı bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
+- Yön sinyali beş bağımsız bileşenin (`ensemble.COMPONENTS`) ağırlıklı
   ortalamasıdır: teknik indikatör (`indicators.py`, BTC/ETH lead-lag +
   taker buy ratio dahil), ML model (`ml_model.py`, aynı taker buy ratio bir
   FEATURE_COLUMNS girdisi olarak da kullanılır), XRPL balina/borsa akışı
   (`whale_signal.py`, XRPSCAN public API), haber/düzenleyici sentiment
   (`news_signal.py`, Google News RSS — CryptoPanic denendi ama ücretsiz
   katmanını kaldırmış, $50/hafta'dan başlıyor, o yüzden vazgeçildi), emir
-  defteri dengesizliği (`orderbook_signal.py`, Binance `/api/v3/depth`), ve
+  defteri dengesizliği (`orderbook_signal.py`, Binance `/api/v3/depth`).
+  Hiçbiri anahtar gerektirmez.
+
+  **Altıncı bileşen `claude` 2026-10-05'te kullanıcının isteğiyle kaldırıldı**
+  ("çok başarısız, görmek istemiyorum"). Kaldırıldığındaki sicili: ömür boyu
+  %49,8 (çekimser olmayan 2.387 çağrının 1.188'i), 14 günlük pencerede %50,6
+  (870 çağrı) — yazı-tura, ama havuzun kanıtının %15,6'sını çekiyordu.
+  Anahtarı 2026-10-02 ~10:00 UTC'de iptal edilmişti ve o günden beri her
+  turda çekimserdi, yani kaldırmak hiçbir canlı kararı değiştirmedi. Kod
+  (`claude_signal.py`), "Sadece Claude" portföyü ve arayüz paneli gitti;
+  `predictions.claude_*` kolonları, `model_state`'teki `claude` satırı ve
+  donmuş portföy satırı ($832,41 nakit, açık pozisyon yok) geçmiş olarak
+  duruyor — hiçbir şey onları okumuyor. `ANTHROPIC_API_KEY` artık
+  `predict.yml`'a verilmiyor. Aşağıdaki not kaldırılmadan önceki kayıttır,
+  geri getirmeyi düşünen biri için:
+
   Claude'un kendi bağımsız değerlendirmesi (`claude_signal.py`) — teknik ve
   balina bileşenlerinin ham sinyalini + gerçek son haber başlıklarını
   (`news_signal.recent_headlines()`, sadece haber bileşeninin anahtar-kelime
@@ -466,20 +481,21 @@ ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
   01:31'de ~1,398'den "trend kırıldı" ile çıkılacaktı; kesinti portföye
   ~$18-36 kazandırdı. O dönemin portföy sonuçlarını buna göre oku.
 
-- **Altı bağımsız $1000 kağıt-portföy** (`trading.py`): orijinal ensemble
-  portföyü (`portfolio_state`/`trades`, id=1, hiç değişmedi) artı beş
+- **Beş bağımsız $1000 kağıt-portföy** (`trading.py`): orijinal ensemble
+  portföyü (`portfolio_state`/`trades`, id=1, hiç değişmedi) artı dört
   tekil-sinyal stratejisi — sadece teknik, sadece ML, sadece balina, sadece
-  haber, sadece Claude (`trading.STRATEGIES`, `strategy_portfolios`/
+  haber (`trading.STRATEGIES`, `strategy_portfolios`/
   `strategy_trades` tablolarında `strategy` kolonuyla anahtarlı;
-  `orderbook`'un kendi stratejisi yok, kullanıcı sadece bu beşini istedi).
+  `orderbook`'un kendi stratejisi yok, kullanıcı istemedi). Beşincisi,
+  sadece Claude, 2026-10-05'e kadar koştu ve bileşeniyle birlikte kaldırıldı
+  (bkz. yukarıdaki bileşen notu); satırı $832,41 nakitte donmuş duruyor.
   Hepsi **aynı** `compute_rebalance()`/`maybe_trade()`
   mantığından geçiyor — `maybe_trade(db, strategy, ...)` sadece hangi
   tabloya okuyup/yazacağını seçiyor, karar mantığı tekrarlanmıyor.
-  `predict.py` her 15 dakikada 6 kez `maybe_trade()` çağırır (ensemble +
-  5 tekil, biri başarısız olursa diğerlerini engellemez). `technical`/`ml`
+  `predict.py` her 15 dakikada 5 kez `maybe_trade()` çağırır (ensemble +
+  4 tekil, biri başarısız olursa diğerlerini engellemez). `technical`/`ml`
   stratejileri zaten kalibre edilmiş güveni kullanır (calibration.py önce
-  çalışır); `claude` calibration.py'den geçmez (bkz. yukarıdaki `claude`
-  bileşeni notu — backtest edilemediği için kalibre edecek veri yok).
+  çalışır).
   **Geçmişe dönük başlangıç**: `backend/backfill_strategy_portfolios.py`
   (yeni `Backfill Strategy Portfolios` workflow'u, `workflow_dispatch`,
   cron yok) `predictions` tablosundaki tüm geçmiş satırları kronolojik
@@ -498,11 +514,11 @@ ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
   migration'ı önce uygulanmalı, `predict.py` canlı işlem yapmaya
   başlamadan önce (ya da hemen sonra — idempotent olduğu için kritik
   değil) backfill workflow'u manuel tetiklenmeli, yoksa backfill canlı
-  birkaç işlemin üzerine yazar (zararsız ama gereksiz). Frontend'de "6
-  Model Karşılaştırması" tek bir sayfa (`app.js:renderStrategyPanels`) —
+  birkaç işlemin üzerine yazar (zararsız ama gereksiz). Frontend'de "Model
+  Karşılaştırması" tek bir sayfa (`app.js:renderStrategyPanels`) —
   CSS grid (`grid-template-columns: repeat(auto-fit, minmax(200px,1fr))`)
   kullanır, kart listesi yatay kaydırma DEĞİL: geniş tarayıcı
-  penceresinde 6 panel otomatik yan yana sığar (minmax genişliği
+  penceresinde 5 panel (2026-10-05'e kadar 6) otomatik yan yana sığar (minmax genişliği
   `claude` eklenirken 240px'ten 200px'e düşürüldü), dar (telefon) ekranda
   tek sütuna düşer, hiçbir zaman cursor'la yatay kaydırma gerekmez (önceki
   `strategy-cards-scroll` tasarımı kullanıcı "kaydırmayı sevmiyorum, hepsini
@@ -626,8 +642,8 @@ ayarları taşıyor: `InteractiveToken` logon (kullanıcı oturumu açıkken
   bir replay yolu yok — `claude_signal.py` ile aynı sınırlama).
 
 - **Kanal Finans TŞ takip-portföyü** (`backend/kanal_finans_trading.py`):
-  yedinci $1000 kağıt-portföy — diğer altısı (ensemble + technical/ml/whale/
-  news/claude) `trading.compute_rebalance()`'ın güven-skalalı, 15-dakikalık-
+  ayrı bir $1000 kağıt-portföy — ensemble ve tekil-sinyal portföyleri
+  (technical/ml/whale/news; 2026-10-05'e kadar claude da) `trading.compute_rebalance()`'ın güven-skalalı, 15-dakikalık-
   periyot rebalance mantığından geçerken, **bu portföy `compute_rebalance()`'ı
   hiç kullanmaz**. Sebep: Tunç Şatıroğlu sayısal bir güven vermiyor, ikili
   (al/sat/tut) bir yorum veriyor — bu yüzden kendi küçük, olay-tabanlı karar

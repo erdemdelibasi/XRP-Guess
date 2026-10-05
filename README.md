@@ -6,13 +6,13 @@ her 15 dakikada bir bir sonraki çeyrek-saat işareti için yön (artış/azalı
 yüzde değişim ve hedef fiyat tahmini üreten, tahminleri loglayan ve başarı
 oranını gösteren bir panel. iPhone'da "Ana Ekrana Ekle" ile app gibi çalışır.
 
-Tahmin altı bağımsız kaynaktan gelen sinyalin ağırlıklı birleşimidir:
+Tahmin beş bağımsız kaynaktan gelen sinyalin ağırlıklı birleşimidir:
 **teknik indikatörler** (RSI/MACD/EMA/Bollinger + BTC-ETH eşzamanlı ve
 gecikmeli korelasyon + taker alım oranı), **ML modeli**, **XRPL balina/borsa
 akışı** (zincir üzerinden büyük transferler), **haber/düzenleyici sentiment**
-(SEC-Ripple davası gibi başlıklar), **emir defteri dengesizliği** (anlık
-alım/satım derinliği) ve **Claude'un kendi bağımsız değerlendirmesi**
-(Anthropic API'sine yapılan bir çağrıyla). Her birinin ağırlığı kendi geçmiş
+(SEC-Ripple davası gibi başlıklar) ve **emir defteri dengesizliği** (anlık
+alım/satım derinliği). Altıncı bileşen olan Claude değerlendirmesi
+2026-10-05'te kaldırıldı (yazı-tura isabeti; bkz. `CLAUDE.md`). Her birinin ağırlığı kendi geçmiş
 isabet oranına göre günlük olarak yeniden ayarlanır.
 
 **Bu bir yatırım tavsiyesi aracı değildir.** Binance hesabına hiç bağlanmaz,
@@ -43,21 +43,8 @@ bu tamamen kağıt üzerinde bir deneydir, gerçek hesabına dokunmaz.
    Balina sinyali (XRPSCAN) ve haber sinyali (Google News RSS) için ayrıca
    bir anahtar gerekmez, ikisi de tamamen ücretsiz ve herkese açık.
 
-   Claude sinyali için ise (bkz. aşağıda "Nasıl çalışıyor") kendi Anthropic
-   API key'ini eklemen gerekir — **bu, projedeki tek ücretli bileşendir**,
-   diğer beşi tamamen ücretsiz kamu API'leri kullanıyor:
-   - https://console.anthropic.com adresinden bir hesap açıp faturalandırma
-     (kredi kartı) ekle, **API Keys** sayfasından yeni bir key oluştur.
-   - `ANTHROPIC_API_KEY` adıyla GitHub Secrets'a ekle.
-   - Bu secret'ı eklemezsen sistem çökmez — Claude bileşeni sadece sürekli
-     "sessiz" (nötr) kalır, diğer beş sinyal normal çalışmaya devam eder.
-   - Yaklaşık maliyet: günde 96 çağrı (15 dakikada bir) × Claude Sonnet 5,
-     her çağrı küçük bir metin (birkaç yüz token) olduğu için ayda ~$5-6
-     civarı — sıfır değil ama ihmal edilebilir. Diğer beş sinyal tamamen
-     ücretsiz kaldığı için bu, projedeki tek ücretli bileşen. (Daha ucuzu
-     için `backend/claude_signal.py`'deki `MODEL`'i `claude-haiku-4-5`
-     yapıp `output_config`'ten `effort` alanını kaldırman yeterli — o
-     modelde bu parametre desteklenmiyor.)
+   Tahmin döngüsü artık hiçbir ücretli API kullanmıyor (2026-10-05'e kadar
+   Claude bileşeni `ANTHROPIC_API_KEY` istiyordu; kaldırıldı).
 
    Günlük özet e-postası istiyorsan (bkz. aşağıda "Nasıl çalışıyor") şu
    üçünü de ekle:
@@ -159,7 +146,7 @@ projenin kendi trade-uygulama yarısı için:
 ## Nasıl çalışıyor
 - Her 15 dakikada bir (`.github/workflows/predict.yml`, `:01/:16/:31/:46`)
   GitHub Actions, Binance'tan XRP/BTC/ETH'nin 15 dakikalık mum verisini çeker
-  ve altı bağımsız sinyali hesaplar:
+  ve beş bağımsız sinyali hesaplar:
   - **Teknik** (`indicators.py`): RSI, MACD, EMA kesişimi, Bollinger, hacim,
     BTC/ETH ile eşzamanlı korelasyon, BTC/ETH'nin XRP'yi kaç periyot
     (15dk-2sa) önden yönlendirdiğini bulan gecikmeli (lead-lag) korelasyon,
@@ -188,25 +175,16 @@ projenin kendi trade-uygulama yarısı için:
     ettiren haber türü budur). Oy tabanlı bir sentiment API'si olmadığı için
     diğer bileşenlere göre daha zayıf/gürültülü bir sinyaldir — bu yüzden
     ensemble'daki payı küçük tutulur. Eşleşen başlık yoksa sessiz kalır.
-  - **Claude** (`claude_signal.py`): teknik sinyalin ve balina akışının o
-    anki ham değerleriyle, o sıradaki gerçek XRP/Ripple haber başlıklarının
-    metnini (haber sinyalinin anahtar-kelime skoru değil, başlıkların
-    kendisi) Anthropic API'sine (Claude Sonnet 5) gönderip bağımsız bir
-    yön/güven değerlendirmesi ister. Projedeki **tek ücretli** bileşen —
-    kendi `ANTHROPIC_API_KEY`'in yoksa (bkz. yukarıda kurulum) sürekli
-    sessiz kalır, sistemin geri kalanını etkilemez. Diğer canlı-only
-    sinyaller (balina/haber/emir-defteri) gibi bu da ucuza geriye test
-    edilemez — gerçek değeri ancak haftalarca canlı veri birikince görülür.
 
-  Bu altı sinyal `ensemble.py` içinde, her birinin kendi geçmiş isabet
+  Bu beş sinyal `ensemble.py` içinde, her birinin kendi geçmiş isabet
   oranıyla orantılı ağırlıklarla birleştirilip **bir sonraki çeyrek-saat
   işareti** (örn. 18:07'de çalışırsa 18:15'i) için yön, yüzde değişim ve
   hedef fiyat tahmini olarak loglanır. Bir saat içinde böylece 4 ayrı tahmin
   birikir (18:15, 18:30, 18:45, 19:00 gibi). Aynı çalışma, hedef zamanı
   gelmiş önceki tahminleri gerçekleşen fiyatla karşılaştırıp doğru/yanlış
-  olarak işaretler (altı bileşenin her biri için ayrı ayrı).
+  olarak işaretler (beş bileşenin her biri için ayrı ayrı).
 - Her gün (`daily_retrain.yml`) ML modeli ~41 günlük 15-dakikalık geçmişle
-  yeniden eğitilir ve altı bileşenin de son 14 günlük başarı oranına göre
+  yeniden eğitilir ve beş bileşenin de son 14 günlük başarı oranına göre
   birleştirme ağırlıkları güncellenir — sistemin kendini zamanla ayarlaması
   bu şekilde olur. Balina/haber gibi çoğu zaman sessiz kalan bileşenler için
   yeterli "konuştuğu" örnek birikene kadar (asgari 20 sessiz-olmayan
@@ -245,7 +223,7 @@ projenin kendi trade-uygulama yarısı için:
 - Her gün saat 18:10'da (Türkiye saati, `daily_report.yml`) son 24 saatin
   (dün 18:00 - bugün 18:00) özeti e-posta ile gönderilir: kaç tahmin
   yapıldı/sonuçlandı/doğru çıktı, hangi bileşen (teknik/ML/balina/haber/emir
-  defteri/Claude) o gün en isabetliydi, sanal portföyün bakiyesi ve XRP
+  defteri) o gün en isabetliydi, sanal portföyün bakiyesi ve XRP
   fiyatı dünden bugüne
   nasıl değişti, ve güncel ensemble ağırlıkları. Bu, `trades` ve
   `predictions` tablolarındaki geçmiş kayıtlardan geriye dönük olarak
@@ -260,7 +238,7 @@ projenin kendi trade-uygulama yarısı için:
   projenin Supabase'ine yazar. Bu projenin kendi `backend/kanal_finans.py`'si
   (her 15 dakikada bir, YouTube'a hiç gitmeden) o satırları okuyup XRP
   olanları portföye uygular. Bu tamamen **ayrı ve bağımsız bir bilgi
-  akışıdır** — yukarıdaki altı sinyalden hiçbirine karışmaz, kendi
+  akışıdır** — yukarıdaki beş sinyalden hiçbirine karışmaz, kendi
   tahmini/skoru yoktur, panelde ayrı bir kart olarak (video linki, hangi
   varlıktan bahsedildiği, kısa özet ve Tunç Şatıroğlu'nun o anki tonu —
   olumlu/olumsuz/nötr) gösterilir. Video kripto konusuna hiç değinmiyorsa
@@ -289,10 +267,9 @@ projenin kendi trade-uygulama yarısı için:
 - "Borsaya giriş=düşüş, çıkış=yükseliş" ve haber-başlık sentiment'i,
   akademik literatürde sıkça kullanılan ama kesinliği kanıtlanmamış sezgisel
   (heuristic) yorumlardır — teknik/ML sinyalleri gibi bunlar da olasılıksaldır.
-- Claude sinyali de balina/haber/emir-defteri gibi canlı-only'dir — ucuza
-  geriye test edilemez (her adım gerçek, ücretli bir API çağrısı gerektirir),
-  bu yüzden `backtest.py`'a dahil değildir ve "işe yarıyor mu" sorusunun
-  cevabı ancak haftalarca canlı sonuç birikince netleşir.
+- Claude sinyali (2026-10-05'te kaldırıldı) canlı-only'di ve tam da bu
+  notun öngördüğü gibi cevabı haftalarca canlı sonuçla geldi: 2.387 çağrıda
+  %49,8 isabet — yazı-tura.
 - `backtest.py`'ın ilk ~83 günlük çalıştırması dürüst bir sonuç verdi: o
   belirli pencerede teknik+ML yön isabeti %49 (rastgele tahminden bile
   kötü) çıktı ve strateji al-ve-tut'un (XRP o pencerede güçlü yükseldiği

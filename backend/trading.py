@@ -31,20 +31,22 @@ cooldown cut stop-loss count ~14x and fee drag from ~73% to ~24% of capital
 compute_rebalance() is pure (no DB access) so backtest.py can replay the
 exact same sizing/stop-loss logic offline against historical data.
 
-Six independent $1000 paper portfolios run side by side: the weighted
+Five independent $1000 paper portfolios run side by side: the weighted
 ensemble (the original one, `portfolio_state`/`trades`, unchanged since it
 already had real trade history before this module supported more than one
-strategy) plus five single-signal strategies -- technical-only, ml-only,
-whale-only, news-only, claude-only -- each trading purely on its own signal,
-in `strategy_portfolios`/`strategy_trades` (keyed by `strategy`). All six run
+strategy) plus four single-signal strategies -- technical-only, ml-only,
+whale-only, news-only -- each trading purely on its own signal, in
+`strategy_portfolios`/`strategy_trades` (keyed by `strategy`). A fifth,
+claude-only, ran until 2026-10-05 with its component (see ensemble.py); its
+row stays frozen in cash ($832.41) as history and nothing reads it. All five run
 through the exact same compute_rebalance()/maybe_trade() logic; only which
 table gets read/written differs. This lets a single signal's real paper
 performance be compared against the blended ensemble instead of only ever
 being seen mixed together. orderbook has no strategy of its own here (the
-user only asked for the other five); `backfill_strategy_portfolios.py` seeds
+user only asked for the others); `backfill_strategy_portfolios.py` seeds
 each from historical `predictions` rows the first time it's deployed (a
 strategy backfills to no trades at all -- correctly -- for every row that
-predates its own columns existing, e.g. every historical row for `claude`).
+predates its own columns existing).
 """
 from datetime import datetime, timezone
 
@@ -52,7 +54,7 @@ FEE_RATE = 0.001
 MIN_CONFIDENCE_TO_TRADE = 0.02
 STARTING_CASH = 1000.0
 
-STRATEGIES = ("technical", "ml", "whale", "news", "claude")  # the five single-signal portfolios; "ensemble" is the original, separate table
+STRATEGIES = ("technical", "ml", "whale", "news")  # the four single-signal portfolios ("claude" retired 2026-10-05); "ensemble" is the original, separate table
 
 MAX_ALLOCATION = 0.85                  # a single signal never commits more than 85% of the portfolio to XRP
 CONFIDENCE_FOR_MAX_ALLOCATION = 0.25   # confidence level that maps to MAX_ALLOCATION (typical confidences run ~0.05-0.20)

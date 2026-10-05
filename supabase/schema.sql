@@ -32,6 +32,9 @@ create table if not exists predictions (
   orderbook_confidence  numeric,
   orderbook_pct_change  numeric,
   orderbook_price       numeric,
+  -- claude_* and weight_claude: the LLM component, retired 2026-10-05 (see
+  -- backend/ensemble.py). Kept for the rows already written; nothing writes
+  -- them any more.
   claude_direction      text,
   claude_confidence     numeric,
   claude_pct_change     numeric,
@@ -116,6 +119,7 @@ create index if not exists predictions_unresolved_idx on predictions (resolved_a
 -- resolved, non-abstained predictions `rolling_accuracy` is computed from;
 -- combine() needs it to know how much evidence is behind an accuracy (an
 -- accuracy alone can't distinguish 6/10 from 600/1000).
+-- 'claude' stays allowed only because its retired row (2026-10-05) is kept.
 create table if not exists model_state (
   component        text primary key check (component in ('technical', 'ml', 'whale', 'news', 'orderbook', 'claude')),
   weight           numeric not null default 0.2,
@@ -128,12 +132,11 @@ create table if not exists model_state (
 --   alter table model_state add column if not exists sample_size int not null default 0;
 
 insert into model_state (component, weight) values
-  ('technical', 0.24),
-  ('ml', 0.24),
-  ('whale', 0.12),
-  ('news', 0.10),
-  ('orderbook', 0.15),
-  ('claude', 0.15)
+  ('technical', 0.28),
+  ('ml', 0.28),
+  ('whale', 0.14),
+  ('news', 0.12),
+  ('orderbook', 0.18)
 on conflict (component) do nothing;
 
 -- Virtual $1000 paper-trading portfolio: simulates automatically buying/
@@ -171,12 +174,14 @@ create table if not exists trades (
 
 create index if not exists trades_created_at_idx on trades (created_at desc);
 
--- Five more $1000 paper portfolios, one per individual signal (technical-only,
--- ml-only, whale-only, news-only, claude-only), independent of the weighted
+-- Four more $1000 paper portfolios, one per individual signal (technical-only,
+-- ml-only, whale-only, news-only), independent of the weighted
 -- ensemble portfolio above -- lets us compare a single-signal strategy's real
 -- performance against the ensemble instead of only ever seeing them blended
 -- together. orderbook isn't included here -- see CLAUDE.md for why the user
--- scoped this to just these five. Same shape as portfolio_state/trades so
+-- scoped this to these. A fifth, claude-only, ran until 2026-10-05; its row
+-- and trades are kept as history, which is why the checks still allow
+-- 'claude'. Same shape as portfolio_state/trades so
 -- trading.py can reuse the exact same compute_rebalance()-driven logic, just
 -- routed to these tables via a `strategy` argument instead of a fixed id=1.
 create table if not exists strategy_portfolios (
@@ -189,7 +194,7 @@ create table if not exists strategy_portfolios (
   updated_at             timestamptz not null default now()
 );
 
-insert into strategy_portfolios (strategy) values ('technical'), ('ml'), ('whale'), ('news'), ('claude')
+insert into strategy_portfolios (strategy) values ('technical'), ('ml'), ('whale'), ('news')
   on conflict (strategy) do nothing;
 
 create table if not exists strategy_trades (

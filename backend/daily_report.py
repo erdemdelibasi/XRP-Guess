@@ -25,7 +25,7 @@ import trading
 TIMEZONE = timezone(timedelta(hours=3))  # Turkey: fixed UTC+3, no DST
 TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
              "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri", "claude": "Claude"}
+COMPONENT_LABELS = {"technical": "Teknik", "ml": "ML", "whale": "Balina", "news": "Haber", "orderbook": "Emir Defteri"}
 
 # Kanal Finans TŞ is the seventh $1000 paper portfolio. It is NOT one of
 # trading.STRATEGIES (different tables, different decision engine -- see
@@ -39,7 +39,7 @@ MOMENTUM = "momentum"
 UNSCORED_STRATEGIES = (KANAL_FINANS, MOMENTUM)
 REPORT_STRATEGIES = ("ensemble", *trading.STRATEGIES, KANAL_FINANS, MOMENTUM)
 STRATEGY_LABELS = {"ensemble": "Ensemble (ana model)", "technical": "Teknik", "ml": "ML", "whale": "Balina",
-                   "news": "Haber", "claude": "Claude", KANAL_FINANS: "Kanal Finans TŞ", MOMENTUM: "Trend Takip"}
+                   "news": "Haber", KANAL_FINANS: "Kanal Finans TŞ", MOMENTUM: "Trend Takip"}
 # Deliberately different wording from the ensemble's English UP/DOWN labels --
 # a stance is what Tunç Şatıroğlu said, not a prediction of ours (same
 # distinction app.js:KANAL_FINANS_STANCE_LABELS makes in the UI).
