@@ -38,7 +38,12 @@
 # count for today. 12 hours sits inside both.
 #
 # If GitHub cannot be asked, nothing is dispatched: the cron fallback still
-# runs (late), whereas a blind dispatch could run twice.
+# runs (late), whereas a blind dispatch could run twice. But one failed call is
+# not "cannot be asked": the whole attempt -- guard, then dispatch -- is tried
+# three times, a minute apart. Measured 2026-10-07: XRP-Guess's 18:10 report
+# dispatch got a single HTTP 500, the cron fallback started at 20:34Z, and the
+# mail came five and a half hours late. The guard runs again before every
+# retry, so a 500 that created the run anyway is seen and not doubled.
 param(
     [Parameter(Mandatory = $true)][string]$Workflow,
     [int]$WindowHours = 12,
@@ -67,12 +72,9 @@ $gh = "C:\Program Files\GitHub CLI\gh.exe"
 
 $previousOutputEncoding = [Console]::OutputEncoding
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-try {
+function Attempt {
     $raw = & $gh run list --repo $repo --workflow $Workflow --limit 20 --json "createdAt,startedAt,event,status,conclusion" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Log "gh run list failed (exit=$LASTEXITCODE): $raw -- not dispatching, the cron fallback stays"
-        exit 1
-    }
+    if ($LASTEXITCODE -ne 0) { throw "gh run list failed (exit=$LASTEXITCODE): $raw" }
     $cutoff = (Get-Date).ToUniversalTime().AddHours(-$WindowHours)
     # Parsed here rather than with --jq: Windows PowerShell 5.1 strips the
     # double quotes a jq string literal needs on its way to a native program.
@@ -109,14 +111,29 @@ try {
         exit 0
     }
     $out = & $gh workflow run $Workflow --repo $repo --ref main 2>&1
-    Log "dispatched ${Workflow}: $out exit=$LASTEXITCODE"
-    exit $LASTEXITCODE
-} catch {
-    # Under Windows PowerShell 5.1 with Stop, a native program's stderr line
-    # arriving through 2>&1 is itself a terminating error -- without this the
-    # run would die before writing a word to the log.
-    Log "error: $_ -- not dispatching, the cron fallback stays"
-    exit 1
+    if ($LASTEXITCODE -ne 0) { throw "gh workflow run failed (exit=$LASTEXITCODE): $out" }
+    Log "dispatched ${Workflow}: $out exit=0"
+    exit 0
+}
+
+$attempts = 3
+try {
+    for ($i = 1; $i -le $attempts; $i++) {
+        try {
+            Attempt
+        } catch {
+            # Under Windows PowerShell 5.1 with Stop, a native program's stderr
+            # line arriving through 2>&1 is itself a terminating error -- this
+            # is where a failed gh call lands, with its message.
+            if ($i -lt $attempts) {
+                Log "error (attempt $i/$attempts): $_ -- checking again in 60 s"
+                Start-Sleep -Seconds 60
+            } else {
+                Log "error (attempt $i/$attempts): $_ -- not dispatching, the cron fallback stays"
+                exit 1
+            }
+        }
+    }
 } finally {
     [Console]::OutputEncoding = $previousOutputEncoding
 }
